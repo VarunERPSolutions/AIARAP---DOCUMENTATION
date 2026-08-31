@@ -1,0 +1,5 @@
+# Backend: Node.js + TypeScript (NestJS)
+
+AIARAP's backend is built on Node.js + TypeScript, using NestJS. The main alternative considered was Java + Spring Boot, whose one structural advantage in this domain — SAP's Java Connector (JCo) for direct RFC/BAPI-level integration — doesn't apply here, since Tenants' SAP systems are reached exclusively via OData/REST, not RFC/BAPI. With that advantage off the table, Node.js/TypeScript is the stronger choice: it shares a language with the React/TypeScript frontend ([ADR-0008](0008-frontend-react-spa.md)), enabling shared DTOs/validation types and a single hiring pool, and has full, mature support for everything else the backend talks to — SAP/Salesforce OData/REST APIs, Stripe, AWS Textract, and AWS Cognito.
+
+**Update ([ADR-0017](0017-sap-batch-extraction-java-spring-batch.md))**: this remains the stack for the API backend and all request-driven/incremental work. Nightly bulk SAP data extraction is carved out to a separate Java + Spring Batch service, for Spring Batch's chunked/checkpointed/restartable job processing — a narrow, deliberate exception, not a reopening of this decision.

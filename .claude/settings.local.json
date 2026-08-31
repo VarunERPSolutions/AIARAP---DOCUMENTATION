@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl *)",
+      "Bash(python3 *)",
+      "Bash(command -v skills-sh)",
+      "Bash(command -v skills)",
+      "Bash(npm ls *)",
+      "Bash(where skills-sh *)",
+      "Bash(where skills *)",
+      "Bash(npx --yes skills-sh --version)",
+      "Bash(npx --yes skills-sh --help)"
+    ]
+  }
+}

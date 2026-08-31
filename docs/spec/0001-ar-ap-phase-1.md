@@ -1,0 +1,131 @@
+# AIARAP — AR/AP Phase 1 Spec
+
+## Problem Statement
+
+Varun ERP Solutions' Tenants — businesses running SAP (and in some cases Salesforce for Customer/Payer data) — need to accelerate cash collection from their own customers (Payers) and streamline vendor payables (Vendors), without replacing SAP/Salesforce as their system of record. Manual invoice/bill handling, ad hoc payment collection, and paper-based procurement create friction and delay on both sides of the ledger.
+
+## Solution
+
+AIARAP, a multi-tenant SaaS platform operated by Varun ERP Solutions, extracts Invoices from a Tenant's SAP (and optionally Salesforce) system, presents them to Payers via a per-Tenant branded portal for guest or registered payment, collects payment via Stripe, writes payment/clearing status back to SAP, and reconciles collected funds by payment method. Payers can also browse the Tenant's product catalog and create Sales Orders, which feed future Invoices through the same flow.
+
+On the AP side, AIARAP captures Bills from Vendors (email + Textract, or Excel upload), routes them for line-item approval against a Tenant-configurable dynamic approval matrix, and pushes approved Bills into SAP for SAP's own payment run to execute. It also supports RFQ management with Vendors (feeding SAP Purchase Requisitions, Info Records, or Purchasing Contracts), Purchase Order visibility, and ASN submission for Vendors without EDI capability.
+
+## User Stories
+
+### AR — Payer-facing
+
+1. As a Payer, I want to look up a single Invoice by Invoice No + Customer No + Amount and pay it without registering, so I can quickly settle a bill without creating an account.
+2. As a Payer, I want to register an account tied to my company's SAP/Salesforce Customer ID, so I can view all open Invoices at once.
+3. As a Payer, I want to make multiple partial payments against an Invoice over time, so I can pay what I can afford now and the rest later.
+4. As a Payer, I want to pay via credit card (Stripe), so I can settle Invoices online.
+5. As a Payer, I want to preview or download the original SAP invoice PDF on demand, so I have an official record of what I'm paying.
+6. As a Payer, I want to browse the Tenant's product catalog and create a Sales Order, so I can place new orders without contacting the Tenant directly.
+7. As a person at a Payer company, I want to request access when my email domain matches the company's, so I can get set up without waiting for a manual invite.
+8. As a Payer Admin, I want to approve or deny access requests and manage other Users at my own company, so I control who gets portal access.
+9. As a Payer, I want to register credit cards via Stripe Elements/Checkout, so my raw card data never touches AIARAP's servers.
+
+### AR — Tenant-facing
+
+10. As a Tenant finance user, I want Invoice payments (including partials) to write back to SAP immediately, so SAP's AR aging always reflects reality.
+11. As a Tenant finance user, I want Credit Card charges broken down by charge and fee, both per-transaction and as a daily aggregate, so I can reconcile bank deposits against gross payments.
+12. As a Tenant admin, I want to configure a minimum partial payment amount, so I don't incur disproportionate card processing fees on tiny payments.
+13. As a Tenant, I want my own branded portal subdomain, so my Payers experience this as my own payment page.
+14. As a Tenant user, I want to create/assign tasks (including to an AIARAP Customer Representative) with subtasks and email-interaction capture, so account-related work is tracked.
+15. As a Tenant/Payer user, I want to view Product data (descriptions, images, UOM, labels) sourced from SAP or uploaded directly, so accurate product info is available.
+16. As an AIARAP Customer Representative, I want to be assigned as the point of contact for a Tenant, so I can support their account.
+
+### AP — Vendor-facing
+
+17. As a Vendor Admin, I want to approve or deny access requests and manage other Users at my own company, so I control who has access to our Bills/POs/RFQs.
+18. As a Vendor, I want to submit a Bill via email attachment (auto-extracted via Textract) or Excel upload, so I don't need direct SAP access to bill the Tenant.
+19. As a Vendor, I want to respond to an RFQ via email attachment or directly in the portal (if I have access), so I can submit quotes regardless of my system capability.
+20. As a Vendor without EDI capability, I want to submit an ASN via API, Excel, or manual entry in the portal, so the Tenant's SAP still gets an Inbound Delivery.
+21. As a Vendor, I want to view Bill progress and payment details, so I know the status of what I'm owed.
+
+### AP — Tenant-facing
+
+22. As a Tenant AP approver, I want to approve Bill line items based on their Account Assignment (Company Code, GL Account, Cost Center, Order, WBS, Vendor), so cost allocation and approval authority are correctly enforced.
+23. As a Tenant AP admin, I want to configure the approval matrix, including mass upload via Excel, so approval routing reflects our organization.
+24. As a Tenant AP approver, I want a Bill only pushed to SAP once every line item is approved (all-or-nothing), so SAP always reflects a fully-vetted document.
+25. As a Tenant, I want SAP's own payment run to execute Vendor payments, so treasury/payment execution stays within our existing financial controls.
+26. As a Tenant Purchasing user, I want to create an RFQ copied from SAP and distribute it to Vendors, so I can solicit competitive quotes.
+27. As a Tenant Purchasing user, I want RFQ responses auto-extracted (unit price, quantity, lead time, minimum order quantity, scale-based pricing), so I can compare quotes without manual data entry.
+28. As a Tenant Purchasing user, I want to approve a winning RFQ response and have it create a Purchase Requisition, Info Record, or Purchasing Contract in SAP as appropriate, so the right SAP workflow is triggered.
+29. As a Tenant, I want Purchase Orders extracted from SAP (header, items, schedule lines, address) with PDF/Excel export, so procurement data is accessible outside SAP.
+30. As a Tenant/Vendor user, I want to print shipping and product labels (Zebra/Bartender), so physical logistics are supported.
+31. As a Tenant, I want Vendor banking details (Routing No, Bank Account, SWIFT, Currency, Country, IFSC, IBAN) captured and maintained, so SAP's payment run has what it needs.
+
+### Cross-cutting
+
+32. As AIARAP, I want each Tenant provisioned with its own Postgres schema, so tenant data is isolated and can be independently backed up, exported, or deleted.
+33. As a Tenant, I want to define custom fields on core entities, so I can capture data unique to my own business needs without a custom schema per Tenant.
+34. As a User, I want authentication delegated to AWS Cognito by default, with my Tenant able to configure its own SSO if needed, so login is secure without AIARAP maintaining its own credential store.
+35. As AIARAP, I want the payment provider (Stripe) abstracted behind a generic interface, so adding a second processor later doesn't require rewriting payment code.
+
+## Implementation Decisions
+
+- **Tenancy & isolation**: schema-per-tenant Postgres isolation ([ADR-0004](../adr/0004-schema-per-tenant-isolation.md)); ~10 Tenants expected over 2-3 years. A separate `global` schema (same shared database instance) holds AIARAP-internal entities that span Tenants — starting with Customer Representative — referenced from any Tenant schema via a plain foreign key (native cross-schema FKs work within one database, no `dblink`/FDW needed). Which Customer Representative(s) are assigned to a given Tenant is tracked inside that Tenant's own schema (e.g. `assigned_customer_representative(customer_rep_id)`), not in the `global` schema — only the Customer Representative's own master record is global.
+- **Custom fields**: JSONB column + a `tenant_custom_field_definitions` metadata table, uniform schema across all Tenants — no per-tenant schema drift ([ADR-0003](../adr/0003-custom-fields-via-jsonb.md)).
+- **Cloud/identity**: AWS as default cloud provider ([ADR-0005](../adr/0005-aws-as-default-cloud-provider.md)); AWS Cognito as default identity platform, with a Tenant able to configure its own SSO/IdP instead ([ADR-0006](../adr/0006-identity-platform-aws-cognito-with-tenant-sso-option.md)); AWS RDS PostgreSQL (not Aurora) at AIARAP's expected scale ([ADR-0007](../adr/0007-rds-postgresql-over-aurora.md)).
+- **Frontend**: React + TypeScript client-rendered SPA (Vite), not Next.js — no SSR/SEO need since every surface is behind authentication ([ADR-0008](../adr/0008-frontend-react-spa.md)).
+- **Backend**: Node.js + TypeScript (NestJS), not Java/Spring Boot — SAP integration is OData/REST only (no RFC/BAPI need), removing Java's one structural advantage here, so the shared-language win with the frontend takes precedence ([ADR-0009](../adr/0009-backend-nodejs-typescript.md)).
+- **Payments**: Stripe for Phase 1, behind a generic Payment Provider interface so a second processor can be added without rewriting payment code ([ADR-0001](../adr/0001-payment-provider-abstraction.md)); card registration via Stripe Elements/Checkout (client-side tokenization, SAQ A PCI scope).
+- **AP payment execution**: stays in SAP's native payment run (e.g. F110) — the platform never initiates outbound Vendor payments ([ADR-0002](../adr/0002-ap-payment-execution-stays-in-sap.md)).
+- **Domain hierarchy**: AIARAP (platform, operated by Varun ERP Solutions) → Tenant (subscriber) → Payer / Vendor (Tenant's own customers/suppliers). Full glossary in [CONTEXT.md](../../CONTEXT.md).
+- **Systems of record**: Payers/Customers may be sourced from SAP or Salesforce; Vendors are SAP-only (Salesforce has no procurement/vendor data model).
+- **Access model**: Contact (person record) → Access Request (pending, approved by the relevant Payer/Vendor Admin, never the Tenant) → User (credentialed) + Contact created together on approval. Access Requests carry a requested access type (Admin or User); if the Payer/Vendor has zero existing Users, the request routes to a shared pool of Tenant Users holding a dedicated Permission (bootstrapping the first Admin), not hardcoded to Tenant Admin; once an Admin exists, self-service Admin-access requests are no longer offered — only User access, still routed to the existing Admin. Full design: [ADR-0015](../adr/0015-payer-vendor-admin-bootstrap-via-access-request.md).
+- **Payer/Vendor Admin user termination**: a Payer/Vendor Admin can deactivate (not delete) regular Users within their own org, but never a peer Admin (that stays with Tenant Admin/ADR-0014). Any active Role Delegation involving the terminated User ends immediately. Full design: [ADR-0016](../adr/0016-payer-vendor-admin-user-termination.md).
+- **Tenant-managed Payer/Vendor onboarding/offboarding**: Tenant Users can originate Payer/Vendor User onboarding one at a time or via bulk Excel upload, but this stays within the existing Access Request flow (still requires the relevant Payer/Vendor Admin's approval — the Tenant never approves). Offboarding is different: a Tenant User holding a dedicated Permission can directly deactivate (not delete) a Payer/Vendor User, one at a time or via bulk Excel, including Payer/Vendor Admin accounts; the affected Payer/Vendor Admin is notified by email. Full design: [ADR-0014](../adr/0014-tenant-managed-payer-vendor-user-onboarding-offboarding.md).
+- **Security roles**: fixed, AIARAP-defined roles (not Tenant-configurable), parameterized SAP-style via reusable Authorization Objects (e.g. a "Sales Area" object = Sales Org + Distribution Channel + Division). A Permission (e.g. "Sales Order Create") references exactly one Authorization Object; holding the Permission surfaces the feature, while the object's field values scope the actual data reachable. Tenant/Payer/Vendor Admins create Derived Roles from AIARAP-defined Parent Roles — same Permission set as the parent (no toggling), only the Authorization Object field values are Admin-supplied, stored as multiple OR'd rows (JSONB criteria, blank/`*` = wildcard, consistent with the approval matrices) to avoid cross-product leakage. A User may hold multiple Roles (union of access). Admin bootstrap: an AIARAP employee creates a Tenant's first Tenant Admin; an existing Tenant Admin can create more Tenant Admins and has full create/change/delete authority over Payer Admin/Vendor Admin accounts; Payer/Vendor Admins cannot create or manage any Admin account. Full design: [ADR-0010](../adr/0010-security-roles-authorization-objects.md).
+- **User impersonation**: an AIARAP Customer Representative assigned to a Tenant can impersonate that Tenant's Users (routine support) or its Payer/Vendor Users (reason required, e.g. investigating a reported bug); a Tenant User holding a dedicated Permission can also impersonate Payer/Vendor Users for the same reason. Session duration is self-specified at start, capped at 60 minutes with auto-expiry; every mutating action taken during a session is logged; no email notification is sent to the impersonated User; the audit trail is visible to AIARAP and the Tenant Admin only. Full design: [ADR-0011](../adr/0011-user-impersonation-audit-trail.md).
+- **Role delegation**: any Tenant, Payer, or Vendor User can self-service delegate one or more of their own Roles to another User for a set time period — per-Role (not all-or-nothing), additive (the delegator keeps their own access), no Admin approval required. Wired into the AP/RFQ approval matrix: an active delegate of a named approver's relevant Role counts as a valid approver on that approver's rows during the delegation window. Full design: [ADR-0012](../adr/0012-role-delegation.md).
+- **Employee offboarding reassignment**: when a Tenant employee leaves, Bill Owner, RFQ Response Owner, and Task assignee are each bulk-reassignable to another active employee, independently and further split by open vs. closed status (each split can go to a different target employee); approval matrix named-approver rows are bulk-reassigned in one flat action (no open/closed split, since matrix rows are standing configuration, not transactions). Only the mutable ownership/assignment field is updated — historical/audit fields on already-completed records (e.g. `approved_by`) are never edited. Full design: [ADR-0013](../adr/0013-employee-offboarding-reassignment.md).
+- **Bill flow**: captured via email+Textract or Excel upload → held pending → approved per line item against the Tenant's own dynamic approval matrix (see below) → pushed to SAP only once every line is approved (all-or-nothing). Each Bill has an **Owner** (Tenant User, defaults to whoever captured it, reassignable) tracking who's currently responsible for it.
+- **AP approval matrix (dynamic)**: a Tenant chooses which fields participate in approver matching — sourced from the Vendor Record, Bill Header, or Bill Item Details (Account Assignment fields — Company Code, GL Account, Cost Center, Order, WBS, Vendor — are typical choices but not the only ones), declared in a `tenant_approval_matrix_field_definition` table (`field_source`: vendor / bill_header / bill_item; `field_name`). Matrix rows are uploadable via Excel, each with an explicit `sequence_number`; rows are evaluated in **ascending sequence order** and the **first row that hits wins** (SAP access-sequence style) — no further rows are considered once one hits. A row's criteria are stored as JSONB (`{field_name: expected_value}`); a **blank cell or explicit `*` both mean wildcard** (matches any value) for that field. If no row matches a Bill line at all, that line is a **blocking error** surfaced to the Tenant's AP admin — never a silent default approver — which naturally blocks the whole Bill under the existing all-or-nothing rule. Each row may name **up to 3 approvers**; **any one** of them approving satisfies that line (coverage/backup, not unanimous sign-off).
+- **RFQ flow**: distributed to Vendor Contacts (email, no login required) or answered in-portal by logged-in Vendors → responses extracted via Textract or entered directly, held pending → routed to an approver via the Tenant's own dynamic RFQ approval matrix (see below), approved **at the response header level** (a single decision for the whole response, not per line) before any SAP call → approval creates a Purchase Requisition, Info Record, or Purchasing Contract in SAP, chosen per situation. Each RFQ response has an **Owner** (Tenant User, defaults to whoever created/manages it, reassignable) tracking who's currently responsible for it.
+- **RFQ approval matrix (dynamic)**: same mechanics as the AP approval matrix, applied at the RFQ response header level rather than per line — a Tenant chooses which fields participate in approver matching, sourced from the **Vendor Record** or the **RFQ Header** only (no RFQ Response Line Details, since there's no per-line decision to route, and no aggregate line data as a header field, by design), declared in a `tenant_rfq_approval_matrix_field_definition` table. Matrix rows are uploadable via Excel, each with an explicit `sequence_number`; rows are evaluated in **ascending sequence order** and the **first row that hits wins** — no further rows considered. Criteria stored as JSONB; a **blank cell or explicit `*` both mean wildcard**. If no row matches, that's a **blocking error** surfaced to the Purchasing admin. Each row may name **up to 3 approvers**; **any one** of them approving is sufficient. Since approval is a single header-level decision, there is no all-or-nothing-across-lines mechanic here (unlike Bill approval) — one approval clears the whole response.
+- **Purchase Requisition approval**: unchanged — stays entirely inside **SAP's own native approval workflow** once the platform creates the Requisition; the platform's dynamic approval matrix does not apply to Purchase Requisitions.
+- **RFQ scale-based pricing**: each RFQ response line has a base `unit_price`/`quantity` (flat quote) plus an optional child table of price-break tiers (`min_quantity`, `unit_price`), open-ended upward — matching how SAP itself represents pricing scales, so no lossy conversion at write-back. Scale pricing is only relevant to **Info Record** and **Purchasing Contract** outcomes, pushed as SAP condition-record scale lines; a **Purchase Requisition** outcome always uses the line's flat `unit_price`/`quantity` and ignores the scale table entirely.
+- **ASN flow**: Vendors without EDI submit via API/Excel/manual entry in-portal, creating an Inbound Delivery in SAP.
+- **Guest Invoice lookup** (Invoice No + Customer No + Amount): protected by rate limiting/CAPTCHA and notification to the Payer Admin after repeated failed attempts.
+- **Partial payments**: unlimited count per Invoice, immediate SAP write-back after each, Tenant-configurable minimum amount (to manage card processing fee economics).
+- **Invoice PDF**: fetched live/on-demand from SAP for both preview and download — not pre-cached at extraction time.
+- **Credit Card reconciliation**: gross/fee/net breakdown, viewable per-transaction and as a daily aggregate.
+- **Portal**: per-Tenant branded subdomain.
+- **Product images/drawings**: pulled on-demand from SAP if maintained there, or uploaded directly by the Tenant otherwise.
+- **Task assignment**: a Task has exactly one assignee — either a Tenant User or a Customer Representative, modeled as two nullable FK columns (`assigned_user_id` into the Tenant's own schema, `assigned_customer_rep_id` into `global.customer_representative`) with a check constraint enforcing at most one set, preserving real FK integrity on both possible assignee types rather than a generic polymorphic `assignee_type`/`assignee_id` pair.
+- **Task/notification delivery**: notification sending is abstracted behind a generic Notification Channel interface (same pattern as the Payment Provider abstraction, [ADR-0001](../adr/0001-payment-provider-abstraction.md)), with **Email** as the only implementation built in Phase 1. Task/assignment code calls the interface, not the Email implementation directly, so Push (and SMS, if ever needed) can be added later as new implementations without rewriting call sites. True push notification requires a native mobile app (device-token registration via APNs/FCM), which is out of scope for Phase 1 — see Out of Scope.
+- **Label printing (Zebra/Bartender)**: file-based for Phase 1, not a direct-to-printer local agent — a browser has no way to open a raw network socket to a Zebra printer or invoke a locally-installed BarTender license, so AIARAP generates a **ZPL file** (for Tenants/Vendors printing directly on Zebra printers) or a **BarTender-compatible XML/CSV data file** (for Tenants/Vendors with an existing BarTender license/template), and the user prints it via their own already-installed driver/software. One fixed default template per label type (shipping label, product label) is shipped in Phase 1 — no per-Tenant template customization. A local print-agent for one-click direct-to-printer printing, and per-Tenant label template customization, are both deferred to Phase 2+ — see Out of Scope.
+
+## Testing Decisions
+
+Tests should exercise external behavior (e.g., "given this extracted SAP invoice payload, does guest lookup return the right Invoice," "given this Stripe webhook, does the SAP write-back and reconciliation view update correctly") rather than internal implementation details.
+
+Proposed seams — the highest-leverage boundaries to test against, avoiding live calls to SAP/Salesforce/Stripe/Textract in tests:
+
+- **SAP/Salesforce Integration Adapter** — one seam per system of record, behind which all extraction (Invoices, Customers, Vendors, POs, Info Records) and write-back (payment clearing, Bill creation, Purchase Requisition/Info Record/Contract creation, Inbound Delivery) is tested against recorded/fixture responses.
+- **Payment Provider interface** ([ADR-0001](../adr/0001-payment-provider-abstraction.md)) — test the AR payment flow (guest/registered lookup, partial payment, reconciliation) against a fake implementation rather than real Stripe.
+- **Document extraction (Textract) seam** — test Bill and RFQ-response capture against fixture extraction outputs, independent of calling AWS Textract directly.
+
+This is a proposal, not yet confirmed with the Tenant/product owner — flag any disagreement before implementation begins.
+
+## Out of Scope
+
+- Full general ledger / system-of-record functionality (SAP/Salesforce remain systems of record; AIARAP never owns the books).
+- Vendor payment execution (stays in SAP's native payment run).
+- Sales Order pricing/tax simulation in SAP and Sales Order replication to the ERP (Phase 2).
+- ACH and SEPA payment methods (Phase 2).
+- Daily bank statement reconciliation, bank-to-GL reconciliation, Customer AR-to-Credit-Card reconciliation, and automated GL posting to SAP (Phase 2).
+- Subscriptions, Usage Recording, and Revenue Recognition (Phase 3 — not yet detailed in this session).
+- Native mobile app and true push notifications (Phase 2 or 3 — Phase 1 notification delivery is Email-only, behind an interface designed so Push can be added later without rewriting call sites).
+- Local print-agent for one-click direct-to-printer label printing, and per-Tenant label template customization (Phase 2+ — Phase 1 label printing is file-based against one fixed default template per label type).
+- A second payment processor beyond Stripe (the interface supports one, but no second implementation is being built now).
+- True per-tenant schema drift / `ALTER TABLE` customization (explicitly rejected in favor of uniform schema + JSONB).
+
+## Further Notes
+
+- Source material: verbal discussion plus `VarunERP_AIARAP_V1.docx`, which defines a Phase 1/2/3 breakdown; this spec covers **Phase 1 only**.
+- Terminology corrected from the source document during this session: "Customer" → **Payer** (AR) and "Customer Admin" → **Payer Admin**; AP-side "Invoice" → **Bill**; "Cost Object" → **Account Assignment** (the SAP-accurate term, since Company Code and GL Account aren't Cost Objects).
+- "EBAN" in the source document was confirmed to be a typo for **IBAN**.
+- Role permission matrices in the source document use `C` = Create/Change/Display, `D` = Display only.
+- Full domain glossary lives in [`CONTEXT.md`](../../CONTEXT.md) at the repo root; architectural decisions in [`docs/adr/`](../adr/).

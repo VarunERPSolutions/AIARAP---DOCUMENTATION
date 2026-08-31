@@ -1,0 +1,56 @@
+# SAP Payment Webhook
+
+A new inbound webhook lets a Tenant's own SAP system push payments it posted natively (bank transfer, check, cash) to AIARAP as they happen, rather than AIARAP waiting for the next scheduled Invoice sync to discover them. This is a distinct integration boundary from [ADR-0001](0001-payment-provider-abstraction.md)'s Payment Provider interface (Stripe) and [ADR-0020](0020-card-expiry-alert-and-stripe-sync.md)'s Stripe webhook — this is the spec's separate **SAP/Salesforce Integration Adapter** seam, the Tenant's own SAP calling AIARAP, not a payment processor.
+
+## Scope: SAP-native payments only
+
+SAP only ever sends payments **it originated** — never an AIARAP-originated card payment, which AIARAP already knows about and writes back to SAP itself via the Automatic Card Payment batch ([ADR-0019](0019-automatic-card-payment-batch.md)). Every `payment` row this webhook produces has `source = 'sap_native'` by construction; there's no ambiguity to resolve at processing time.
+
+## Routing: URL-embedded subdomain, not a global lookup
+
+Unlike Stripe Connect webhooks (ADR-0020), which needed a `global.tenant_registry` routing pointer because Stripe's connected-account ID carries no readable Tenant identity, **AIARAP itself issues this webhook's URL** to each Tenant for their SAP outbound configuration (an HTTP destination or CPI/PI channel). That URL embeds the Tenant's existing `subdomain` (already globally unique in `tenant_registry`) directly in the path — no new global-schema field is needed purely for routing.
+
+## Authentication (mechanism resolved: bearer token)
+
+`tenant_settings.sap_webhook_secret_ref` (new, see `0001-phase-1-table-structures.md`) — an AWS Secrets Manager ARN, following the same "never a raw credential in Postgres" convention already used for the outbound SAP/Salesforce credentials on this table. The secret is sent as a **bearer token** (`Authorization: Bearer <secret>`) rather than an HMAC signature — chosen specifically because SAP's HTTP destination / CPI adapter configuration supports bearer/basic auth natively, with no custom ABAP or iFlow signing logic required. HMAC would be more secure against logging/replay exposure, but given the Open Items below already flag that some Tenants' SAP systems struggle with outbound REST at all, adding a custom-signing requirement on top would exclude even more of them. TLS in transit is the mitigation for the secret-in-header tradeoff, same as any standard bearer-token API.
+
+## Event log and idempotency
+
+`sap_webhook_event` (new) is a dedicated event log, structurally similar to `payment_provider_webhook_event` but kept separate since it's a different integration boundary. `event_type` is generic (not hardcoded to payments) so the Tenant's SAP could push other event types later without a new table. Idempotency has two layers: `sap_message_id` (when SAP's outbound mechanism supplies one) via a partial unique index, and — as the ultimate backstop regardless of whether a message ID was provided or a payload is redelivered — `payment`'s own `(invoice_id, sap_clearing_document, sap_clearing_document_year)` unique index, which any processing path (webhook or scheduled sync) must respect.
+
+## SAP-side technical mechanism (resolved): an AIARAP-built package, not Tenant-built integration
+
+Rather than leaving each Tenant to build their own outbound integration (the original concern — wildly varying technical capability across Tenants, especially older SAP ECC systems), **AIARAP builds and ships a custom SAP program/package**, deployed onto each Tenant's SAP system via a standard transport. This program is what detects a native payment posting and calls the webhook — using SAP's own HTTP client capability (e.g. `cl_http_client`) with the bearer token (matching `tenant_settings.sap_webhook_secret_ref`) supplied at deployment/configuration time, not something the Tenant has to write themselves.
+
+This substantially narrows the original risk: it's no longer "does this Tenant have the SAP development skill to build custom integration," just "does this Tenant's SAP system have *any* outbound HTTP client capability at all" — a much smaller and older-vintage-specific bar. The scheduled Invoice sync (`0002-scheduled-jobs.md`) remains the fallback discovery path for `sap_native` payments for the residual case of a Tenant whose system genuinely can't make outbound HTTP calls.
+
+## Design principle: this is the preferred channel for critical data, payloads should carry more than the minimum
+
+For critical, money-adjacent jobs, the AIARAP-built SAP program is retained as the primary integration channel rather than being treated as a narrow, single-purpose trigger that a pull-based extraction could eventually replace. Since it's AIARAP's own code running inside the Tenant's SAP system, it's well-positioned to attach additional context to each push beyond the bare minimum needed to record the payment — e.g. the account's current open AR balance at the moment of posting, or related document references — captured in `sap_webhook_event.payload` (already `JSONB`, no schema change needed to carry it).
+
+This directly feeds **AR Reconciliation** ([ADR-0023](0023-ar-reconciliation-batch.md)): balance data arriving in real time alongside a payment push is fresher than, and can supplement, the batch's own periodic SAP open-AR extraction — narrowing the reconciliation window and reducing how often a genuine `missing_in_aiarap`/`missing_in_sap` discrepancy is just yesterday's extraction lag rather than a real problem. Both the base and customer-specific package's own installed versions (see Packaging and Deployment below) are also included on every push, giving AIARAP per-Tenant version visibility without a separate check-in mechanism.
+
+## Packaging and deployment (resolved)
+
+**Namespace**: the package's custom objects (function modules, includes, the version-tracking table below) are delivered in an **AIARAP-registered SAP namespace** (via SAP Service Marketplace namespace registration, e.g. `/AIARAP/`), not a customer `Z*`/`Y*` prefix. AIARAP is shipping into many different Tenants' SAP systems, each with their own existing Z/Y custom development — a registered namespace is what avoids naming collisions with whatever a Tenant has already built, and is the standard approach for a commercially-distributed SAP add-on.
+
+**Two packages, not one: base + customer-specific.** A single uniform package can't cover every Tenant's SAP configuration — some Tenants have customizations to their FI posting flow that fall outside standard SAP functionality (custom clearing processes, non-standard fields, Tenant-specific business logic). So the delivery splits in two:
+
+- **Base package**: identical across every Tenant, built and QA'd once per AIARAP release, containing the core logic — the BTE registration, the HTTP client call, and standard-case payload construction. This is where the economies of scale live: one build, one test cycle, many deployments.
+- **Customer-specific package**: bespoke per Tenant, containing only that Tenant's special-case logic layered on top of the base.
+
+The two connect through a **defined extension point (BAdI/customer-exit) in the base package**, not two independent transports both reacting to the same BTE — the base package calls out to the extension point (e.g. right before constructing the webhook payload) if a customer-specific implementation is installed, letting it inject or override Tenant-specific handling (custom field mappings, special clearing document types) without touching the base package's code. This keeps the base package upgrade-safe and authoritative, and confines per-Tenant deviation to a well-defined seam rather than two packages racing to handle the same trigger. Both package versions — base and customer-specific — are tracked and reported separately (see Versioning below), since they evolve independently: the base on AIARAP's own release cadence, the customer-specific one whenever that particular Tenant's special requirements change.
+
+**Detection trigger: a Publish & Subscribe BTE on FI document posting**, not a periodic in-SAP scanning job. The whole point of this webhook is real-time push — a periodic job re-scanning for new postings would just be a shorter-interval version of the Invoice sync fallback that already exists, adding deployment complexity without a real improvement over it. A BTE firing immediately when an FI document posts, with a customer function module registered against it, requires no modification to standard SAP code (upgrade-safe) — the standard, SAP-recommended way to hook into document posting without core mods. **The exact BTE/event number is deliberately not specified here** — it varies between SAP ECC and S/4HANA, and asserting a specific ID without verifying it against the actual target system would be worse than flagging it as an implementation-time task for whoever's doing the ABAP work.
+
+**Versioning and delivery**: AIARAP is not able to centrally push updates into a Tenant's own SAP landscape the way a SaaS deploy or a Salesforce AppExchange package upgrade works (ADR-0027) — SAP systems are Tenant-controlled, and transports must be imported through the Tenant's own change management (Dev → QA → Prod) by their own Basis team. This is a real, structural difference from the Salesforce side, not an oversight. AIARAP maintains the base package in its own development system, exports each version as a transport request, and ships it to every Tenant for their Basis team to import — closer to a traditional on-premise software vendor's patch process than a managed package upgrade. Customer-specific packages follow the same transport-based delivery, but bespoke per Tenant and versioned independently.
+
+The package includes a small version-tracking table (in the same registered namespace) capturing **both** the base and customer-specific package versions, reported back to AIARAP as fields on every webhook push — giving AIARAP visibility into exactly which combination is running at each Tenant without needing to ask. This also surfaces a real maintenance-cost implication worth being explicit about: unlike the base package (one build, many deployments), each customer-specific package is separately developed, tested, and maintained code — the more Tenants need bespoke logic, the more ongoing per-Tenant maintenance surface AIARAP is carrying, not a one-time cost.
+
+**Not pursued for Phase 1**: formal SAP Add-On Assembly Kit packaging / SAP certification ("Certified/Integrated with SAP"). That's a heavier, more involved distribution and certification path suited to a more mature product stage — plain transport-based delivery in a registered namespace is the right scope for now.
+
+## Open items
+
+- The residual case of a Tenant's SAP system with no outbound HTTP client capability at all — the Invoice sync fallback covers it operationally, but isn't a fix to this specific gap.
+- Exact BTE/event number for the FI-posting detection trigger, to be verified against each target system's SAP version (ECC vs. S/4HANA) at implementation time — not guessed at in this design pass.
+- Whether formal SAP Add-On Assembly Kit packaging/certification is worth pursuing at a later, more mature product stage.

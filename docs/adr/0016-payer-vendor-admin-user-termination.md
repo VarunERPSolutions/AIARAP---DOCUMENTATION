@@ -1,0 +1,7 @@
+# Payer/Vendor Admin: Terminate Own Users
+
+A Payer Admin or Vendor Admin can terminate (deactivate) regular Users within their own Payer/Vendor organization — an extension of their existing authority to manage Users in their own org (`CONTEXT.md`).
+
+- **Deactivation, not deletion**, consistent with every other termination/offboarding decision in this spec ([ADR-0013](0013-employee-offboarding-reassignment.md), [ADR-0014](0014-tenant-managed-payer-vendor-user-onboarding-offboarding.md)) — the User/Contact record and their historical activity stay intact and reversible; only access is revoked.
+- **Regular Users only, never a peer Admin**: this does not extend to terminating another Payer/Vendor Admin. That authority remains exactly as [ADR-0010](0010-security-roles-authorization-objects.md) established — only Tenant Admin, or a Tenant User holding the dedicated offboarding Permission ([ADR-0014](0014-tenant-managed-payer-vendor-user-onboarding-offboarding.md)), can deactivate a Payer/Vendor Admin account.
+- **Role Delegation cleanup**: if the terminated User currently has an active delegation ([ADR-0012](0012-role-delegation.md)) — either delegating their own Role to someone else, or receiving a delegation from someone else — that delegation ends immediately upon termination. A delegation to/from a deactivated account serves no purpose and would otherwise leave a dangling grant of access tied to an inactive User.

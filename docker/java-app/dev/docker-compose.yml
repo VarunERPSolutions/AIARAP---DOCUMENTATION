@@ -15,7 +15,8 @@ services:
     networks:
       - java-dev-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      # eclipse-temurin:*-jre-alpine has no curl, only busybox wget.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/actuator/health"]
       interval: 15s
       timeout: 3s
       retries: 3

@@ -20,9 +20,9 @@ variable "db_name" {
 }
 
 variable "db_schema" {
-  description = "Schema created (if missing) to hold the inventory tables, kept separate from application data in the same instance/database."
+  description = "Schema holding the integration_connection table — defaults to the app's own `global` schema (ADR-0004), since this is AIARAP-internal cross-Tenant governance data, not Tenant business data needing schema-per-tenant isolation. Only override if you deliberately want a separate schema instead."
   type        = string
-  default     = "integration_inventory"
+  default     = "global"
 }
 
 variable "db_secret_arn" {

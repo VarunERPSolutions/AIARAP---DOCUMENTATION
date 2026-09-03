@@ -15,6 +15,6 @@ output "connections" {
 }
 
 output "env_domains" {
-  description = "Map of environment -> public hostname for this customer (one domain object per environment now, not apex+wildcard)."
+  description = "Map of environment -> public hostname for this Tenant (one domain object per environment now, not apex+wildcard)."
   value       = { for env, dn in aws_api_gateway_domain_name.env : env => dn.domain_name }
 }

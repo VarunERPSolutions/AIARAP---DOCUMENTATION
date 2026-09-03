@@ -1,10 +1,10 @@
-variable "customer_id" {
-  description = "Short customer identifier used in domain names, resource names, and Cognito client naming (e.g. \"cust01\"). Must be a valid DNS label."
+variable "subdomain" {
+  description = "The Tenant's subdomain — same value as global.tenant_registry.subdomain in the app's own schema (docs/schema/0001-phase-1-table-structures.md). Used in domain names, resource names, and Cognito client naming (e.g. \"acme\"). Must be a valid DNS label."
   type        = string
 }
 
 variable "base_domain" {
-  description = "Customer-facing base domain."
+  description = "Tenant-facing base domain."
   type        = string
   default     = "aiarap.com"
 }
@@ -15,13 +15,13 @@ variable "route53_zone_id" {
 }
 
 variable "environments" {
-  description = "Environments to provision for this customer. \"prd\" is treated as the bare subdomain (custXX.aiarap.com); every other entry gets a prefix (env.custXX.aiarap.com)."
+  description = "Environments to provision for this Tenant. \"prd\" is treated as the bare subdomain ({subdomain}.aiarap.com); every other entry gets a prefix (env.{subdomain}.aiarap.com)."
   type        = list(string)
   default     = ["dev", "qa", "prd"]
 }
 
 variable "connections" {
-  description = "Which source->backend integrations this customer needs. `key` becomes part of the client/resource names, `backend` selects the resource server (must be a key in resource_server_identifiers)."
+  description = "Which source->backend integrations this Tenant needs. `key` becomes part of the client/resource names, `backend` selects the resource server (must be a key in resource_server_identifiers)."
   type = list(object({
     key     = string
     backend = string
@@ -29,7 +29,6 @@ variable "connections" {
   default = [
     { key = "sf-node", backend = "node" },
     { key = "sap-node", backend = "node" },
-    { key = "sap-java", backend = "java" },
   ]
 }
 
@@ -38,23 +37,22 @@ variable "resource_server_identifiers" {
   type        = map(string)
   default = {
     node = "https://api.aiarap.com/node"
-    java = "https://api.aiarap.com/java"
   }
 }
 
 variable "cognito_user_pool_id" {
-  description = "ID of the shared VarunERP Cognito user pool (created once, outside this module)."
+  description = "ID of the shared AIARAP Cognito user pool (created once, outside this module)."
   type        = string
 }
 
 variable "cognito_domain" {
-  description = "Cognito hosted domain used for the OAuth token endpoint, embedded into each connection's secret for the customer's convenience."
+  description = "Cognito hosted domain used for the OAuth token endpoint, embedded into each connection's secret for the Tenant's convenience."
   type        = string
   default     = "auth.varunerpsolutions.com"
 }
 
 variable "api_ids" {
-  description = "Map of backend name -> REST API ID, one API per backend (e.g. { node = \"...\", java = \"...\" }) — dev/qa/prd are STAGES of that one API, not separate APIs. Base-path mappings strip the base path before a request reaches the target API, so \"/node\" and \"/java\" cannot share one underlying API — each backend needs its own, wired to the shared Lambda authorizer. Created once, outside this module. Must have an entry for every backend referenced in var.connections."
+  description = "Map of backend name -> REST API ID, one API per backend (e.g. { node = \"...\" }) — dev/qa/prd are STAGES of that one API, not separate APIs. Base-path mappings strip the base path before a request reaches the target API, so each backend needs its own, wired to the shared Lambda authorizer. Created once, outside this module. Must have an entry for every backend referenced in var.connections."
   type        = map(string)
 }
 
@@ -73,7 +71,7 @@ variable "default_throttle" {
 }
 
 variable "throttle_overrides" {
-  description = "Per-connection throttle overrides, keyed by \"<connection.key>-<environment>\" (e.g. \"sap-java-prd\")."
+  description = "Per-connection throttle overrides, keyed by \"<connection.key>-<environment>\" (e.g. \"sap-node-prd\")."
   type = map(object({
     rate_limit  = number
     burst_limit = number
@@ -83,7 +81,7 @@ variable "throttle_overrides" {
 }
 
 variable "access_token_validity_hours" {
-  description = "Cognito access token lifetime for this customer's app clients."
+  description = "Cognito access token lifetime for this Tenant's app clients."
   type        = number
   default     = 1
 }
@@ -95,7 +93,7 @@ variable "enable_inventory" {
 }
 
 variable "inventory_writer_function_name" {
-  description = "Name of the shared pg-inventory-writer Lambda (created once, outside this module) that upserts/deletes rows in the aiarap RDS inventory schema on Terraform's behalf."
+  description = "Name of the shared pg-inventory-writer Lambda (created once, outside this module) that upserts/deletes rows in the aiarap RDS global schema on Terraform's behalf."
   type        = string
   default     = "varunerp-pg-inventory-writer"
 }

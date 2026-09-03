@@ -2,7 +2,9 @@
 # so the pg-inventory-writer's tables are the source of truth for "who owns
 # which credential." Terraform has no VPC reachability to aiarap RDS
 # directly, so this goes through the shared writer Lambda instead of an
-# in-provider Postgres resource.
+# in-provider Postgres resource. Lands in the aiarap database's existing
+# `global` schema (ADR-0004), not a competing schema — this is AIARAP-
+# internal governance metadata, not Tenant business data.
 #
 # lifecycle_scope = "CRUD" re-invokes on update, and invokes once more with
 # tf.action = "delete" (carrying the last input as tf.prev_input) when a
@@ -15,8 +17,8 @@ resource "aws_lambda_invocation" "conn_inventory" {
   lifecycle_scope = "CRUD"
 
   input = jsonencode({
-    connection_id     = "${var.customer_id}-${each.value.conn_key}-${each.value.env}"
-    customer          = var.customer_id
+    connection_id     = "${var.subdomain}-${each.value.conn_key}-${each.value.env}"
+    tenant_subdomain  = var.subdomain
     connection_key    = each.value.conn_key
     backend           = each.value.backend
     environment       = each.value.env

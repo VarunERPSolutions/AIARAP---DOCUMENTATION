@@ -1,6 +1,6 @@
 # Cross product of connections x environments — this is the full set of
-# credentials/keys/routes this customer needs, per-customer-per-backend-per-env.
-# e.g. sf-node x {dev,qa,prd}, sap-node x {dev,qa,prd}, sap-java x {dev,qa,prd} = 9 entries.
+# credentials/keys/routes this Tenant needs, per-Tenant-per-backend-per-env.
+# e.g. sf-node x {dev,qa,prd}, sap-node x {dev,qa,prd} = 6 entries.
 locals {
   connection_envs = {
     for pair in setproduct(var.connections, var.environments) :
@@ -13,7 +13,7 @@ locals {
     }
   }
 
-  # Distinct backends this customer actually uses, for base-path-mapping.
+  # Distinct backends this Tenant actually uses, for base-path-mapping.
   backends = distinct([for c in var.connections : c.backend])
 }
 

@@ -1,9 +1,18 @@
 output "api_ids" {
-  description = "Feed this straight into customers/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs."
+  description = "Feed this straight into tenants/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs. No \"java\" entry — Java has no inbound API (ADR-0017); see java_outbound.tf."
   value = {
     node = aws_api_gateway_rest_api.this["node"].id
-    java = aws_api_gateway_rest_api.this["java"].id
   }
+}
+
+output "java_batch_complete_queue_url" {
+  description = "SQS queue URL Java publishes to on completing a nightly extraction run; NestJS consumes from here."
+  value       = aws_sqs_queue.batch_complete.url
+}
+
+output "java_outbound_policy_arn" {
+  description = "Attach to java-app's instance role (or pass java_app_iam_role_name to have this stack attach it directly) — grants outbound Tenant SAP secret read + batch-complete publish."
+  value       = aws_iam_policy.java_outbound.arn
 }
 
 output "sap_api_id" {
@@ -27,7 +36,7 @@ output "cognito_domain" {
 }
 
 output "inventory_writer_function_name" {
-  description = "Feed this into customers/variables.tf's inventory_writer_function_name."
+  description = "Feed this into tenants/variables.tf's inventory_writer_function_name."
   value       = module.pg_writer.function_name
 }
 

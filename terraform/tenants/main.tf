@@ -1,8 +1,8 @@
-module "customer" {
-  for_each = var.customers
-  source   = "../modules/customer-onboarding"
+module "tenant" {
+  for_each = var.tenants
+  source   = "../modules/tenant-onboarding"
 
-  customer_id     = each.key
+  subdomain       = each.key
   route53_zone_id = var.route53_zone_id
 
   cognito_user_pool_id           = var.cognito_user_pool_id
@@ -14,7 +14,7 @@ module "customer" {
   throttle_overrides = each.value.throttle_overrides
 }
 
-output "customer_connections" {
+output "tenant_connections" {
   sensitive = true
-  value     = { for k, m in module.customer : k => m.connections }
+  value     = { for k, m in module.tenant : k => m.connections }
 }

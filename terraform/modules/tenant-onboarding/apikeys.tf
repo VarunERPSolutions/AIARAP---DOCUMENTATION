@@ -3,12 +3,12 @@
 # independently-tunable rate limit/quota and shows up separately in metering.
 resource "aws_api_gateway_api_key" "conn" {
   for_each = local.connection_envs
-  name     = "${var.customer_id}-${each.value.conn_key}-${each.value.env}"
+  name     = "${var.subdomain}-${each.value.conn_key}-${each.value.env}"
 }
 
 resource "aws_api_gateway_usage_plan" "conn" {
   for_each = local.connection_envs
-  name     = "${var.customer_id}-${each.value.conn_key}-${each.value.env}"
+  name     = "${var.subdomain}-${each.value.conn_key}-${each.value.env}"
 
   api_stages {
     api_id = var.api_ids[each.value.backend]

@@ -175,45 +175,59 @@ Estimated for java-app/node-app/react-app running ~12–14 hrs/day (not 24/7):
 Note: EBS storage bills 24/7 regardless of instance uptime; only compute scales
 with the on/off schedule. Running all three 24/7 instead would cost ~$60–65/month.
 
-## 11. Customer Integration Hub (Cognito + API Gateway)
+## 11. Tenant Integration Hub (Cognito + API Gateway)
 
 A separate system from everything above — sections 1–9 are about *employees*
 reaching internal servers over Tailscale; this is about *external* systems
-(10 customer Salesforce orgs, 10 customer SAP systems, plus VarunERP's own
-Salesforce) reaching Node/Java/SAP over the public internet, since none of
-those callers can run a Tailscale client. Authenticated via Cognito
-client-credentials + per-connection API keys instead. See
-`architecture-diagram.html` (Figure 2) for the visual and a full worked
-example (three "add two numbers" calls, one each to Node/Java/SAP, shown at
-every hop); this section is a pointer summary, not the full detail.
+(10 Tenant Salesforce orgs, 10 Tenant SAP systems, plus VarunERP's own
+Salesforce) reaching Node over the public internet, since none of those
+callers can run a Tailscale client. Authenticated via Cognito
+client-credentials + per-connection API keys instead. Java is a separate
+concern — see below, not part of this inbound hub at all.
 
 **Where the actual infrastructure-as-code lives** (Terraform, not yet
 applied against real AWS — see Outstanding below):
 - `terraform/shared/` — the once-created stack: Cognito pool + resource
-  servers, 3 REST APIs (node/java/sap), the shared Lambda authorizer, the
-  internal NLB, the Postgres-backed inventory writer.
-- `terraform/modules/` — `customer-onboarding` (stamps out one customer's
+  servers, 2 inbound REST APIs (node/sap), the shared Lambda authorizer, the
+  internal NLB, Java's outbound infrastructure (`java_outbound.tf`), the
+  Postgres-backed inventory writer.
+- `terraform/modules/` — `tenant-onboarding` (stamps out one Tenant's
   certs/domains/Cognito clients/API keys), `lambda-authorizer`,
   `pg-inventory-writer`.
-- `terraform/customers/` — the root config that calls `customer-onboarding`
-  once per customer from a list.
-- `docker/` — how node-app/java-app run separate dev and qa containers on
-  one shared EC2 instance without a dev deploy being able to disrupt qa.
+- `terraform/tenants/` — the root config that calls `tenant-onboarding` once
+  per Tenant from a list.
+- `docker/` — how node-app runs separate dev and qa containers on one
+  shared EC2 instance without a dev deploy being able to disrupt qa
+  (java-app also runs this way, but its ports aren't customer-facing — see
+  `docker/README.md`).
 
-**Core design**: one REST API per backend (not per environment) — dev/qa/prd
-are *stages* of that one API, each with its own NLB listener/target and a
-`gwPort` stage variable driving where the integration forwards. See Figure
-2's listener/routing table for the full port breakdown.
+**Core design**: one REST API per inbound backend (not per environment) —
+dev/qa/prd are *stages* of that one API, each with its own NLB
+listener/target and a `gwPort` stage variable driving where the integration
+forwards.
+
+**Java is outbound-only** (ADR-0017): a nightly batch worker that calls out
+to each Tenant's SAP system to extract data, publishing a "batch complete"
+SQS event NestJS consumes — it never receives an inbound call, so it has no
+REST API, Cognito scope, or NLB listener. `terraform/shared/java_outbound.tf`
+provisions the SQS queue and the IAM policy for reading Tenant SAP
+credentials.
 
 **Outstanding before this can actually be applied**:
-- `node`/`java` prod instances aren't provisioned — `terraform/shared`
-  currently carries placeholder instance IDs for them (guarded by a
-  Terraform `check` block that warns until replaced)
+- `node` prod instance isn't provisioned — `terraform/shared` currently
+  carries a placeholder instance ID for it (guarded by a Terraform `check`
+  block that warns until replaced)
 - SAP prod (a second HANA instance) isn't provisioned either
+- `var.tenant_sap_secret_arn_pattern` (Java's Secrets Manager access) is a
+  guessed naming convention, not confirmed against the app's actual
+  secret-creation code
 - Several account-specific Terraform variables still need real values:
   private subnet IDs, the SAP tailnet-proxy instance ID, the Route53 zone ID
   for `varunerpsolutions.com`, and the `aiarap` RDS instance identifier/
   secret ARN for the inventory writer
+- `architecture-diagram.html` (Figure 2) hasn't been rebuilt to match this
+  design yet — still shows the pre-resolution 4-box layout; see
+  `docs/infra/README.md` for the full list of what changed
 
 ## 12. Outstanding / TODO
 
@@ -237,7 +251,9 @@ are *stages* of that one API, each with its own NLB listener/target and a
       this session
 - [ ] Optional cleanup: remove `TailscaleSSMRole` from sap-hana/sap-ads if you
       don't plan to use SSM (currently harmless but unused)
-- [ ] Customer integration hub (section 11): provision node/java prod
-      instances and SAP prod, fill in the account-specific Terraform
-      variables listed there, then `terraform apply` `terraform/shared`
-      before onboarding any real customer via `terraform/customers`
+- [ ] Tenant integration hub (section 11): provision the node prod instance
+      and SAP prod, confirm `var.tenant_sap_secret_arn_pattern` against the
+      app's real secret-creation code, fill in the account-specific
+      Terraform variables listed there, then `terraform apply`
+      `terraform/shared` before onboarding any real Tenant via
+      `terraform/tenants`

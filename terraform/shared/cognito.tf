@@ -73,25 +73,6 @@ resource "aws_cognito_resource_server" "node" {
   }
 }
 
-resource "aws_cognito_resource_server" "java" {
-  identifier   = "https://api.aiarap.com/java"
-  name         = "java-api"
-  user_pool_id = aws_cognito_user_pool.shared.id
-
-  scope {
-    scope_name        = "java.invoke.dev"
-    scope_description = "Invoke Java API — dev"
-  }
-  scope {
-    scope_name        = "java.invoke.qa"
-    scope_description = "Invoke Java API — qa"
-  }
-  scope {
-    scope_name        = "java.invoke.prd"
-    scope_description = "Invoke Java API — prd"
-  }
-}
-
 # Declared upfront for both dev and prd even though SAP prod isn't
 # provisioned yet — the scope is just a permission string, harmless to have
 # before the backend exists, and one less thing to remember when SAP prod

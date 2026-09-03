@@ -1,5 +1,5 @@
 # Flow 2: VarunERP's own Salesforce -> VarunERP's own SAP. Doesn't fit
-# modules/customer-onboarding (that's shaped for external customers on
+# modules/tenant-onboarding (that's shaped for external Tenants on
 # aiarap.com); this is a single internal relationship on varunerpsolutions.com,
 # so it's wired directly here. One connection per provisioned SAP
 # environment — VarunERP Salesforce also has dev/prod instances, matching

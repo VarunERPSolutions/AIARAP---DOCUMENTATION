@@ -11,7 +11,7 @@ variable "private_subnet_ids" {
   type        = list(string)
 }
 
-# --- Node / Java backends ---
+# --- Node backend ---
 #
 # One entry per environment. dev and qa currently share one EC2 instance
 # (see docker/README.md) — different containers, different host ports. prd
@@ -23,6 +23,9 @@ variable "private_subnet_ids" {
 # or fan out automatically). Do not point prd at the same instance_id as
 # dev/qa — the check block below catches that mistake at plan time, and a
 # real instance ID (unlike this placeholder) is what makes it safe to apply.
+#
+# No java_environments here — Java has no inbound Tenant-facing routing
+# at all (ADR-0017). See java_outbound.tf for its actual infrastructure.
 
 variable "node_environments" {
   description = "Map of environment -> { instance_id, port } for node-app. `port` is used as both the NLB listener port and the target port on that instance."
@@ -37,17 +40,24 @@ variable "node_environments" {
   }
 }
 
-variable "java_environments" {
-  description = "Map of environment -> { instance_id, port } for java-app. `port` is used as both the NLB listener port and the target port on that instance."
-  type = map(object({
-    instance_id = string
-    port        = number
-  }))
-  default = {
-    dev = { instance_id = "i-01afdc2668e71f05b", port = 4001 }    # shares the instance with qa
-    qa  = { instance_id = "i-01afdc2668e71f05b", port = 4002 }    # shares the instance with dev
-    prd = { instance_id = "i-PLACEHOLDER-java-prd", port = 8080 } # NOT YET PROVISIONED — do not apply as-is
-  }
+# --- Java backend (outbound only — see java_outbound.tf) ---
+
+variable "java_app_instance_id" {
+  description = "EC2 instance running the Java/Spring Batch nightly SAP extraction service (ADR-0017). Purely for reference/tagging in this stack — this Terraform doesn't manage its IAM instance role (never has), so java_outbound.tf's IAM policy is created standalone with its ARN as an output; attach it to that instance's role yourself, or pass its role name in if you want this stack to attach it directly."
+  type        = string
+  default     = "i-01afdc2668e71f05b" # per INFRASTRUCTURE_REFERENCE.md
+}
+
+variable "java_app_iam_role_name" {
+  description = "IAM role name attached to java_app_instance_id, if you want java_outbound.tf's policy attached automatically. Leave null to just get the policy ARN as an output and attach it yourself."
+  type        = string
+  default     = null
+}
+
+variable "tenant_sap_secret_arn_pattern" {
+  description = "Resource pattern (with wildcards) matching every Tenant's SAP credential secrets — tenant_settings.sap_credential_secret_ref / sap_oauth_token_secret_ref in the app's own schema (docs/schema/0001-phase-1-table-structures.md). Default is a reasonable guess at the naming convention, NOT confirmed against whatever the app's secret-creation code actually uses — verify before relying on it."
+  type        = string
+  default     = "arn:aws:secretsmanager:*:*:secret:aiarap/tenant/*/sap-*"
 }
 
 # --- SAP backend ---

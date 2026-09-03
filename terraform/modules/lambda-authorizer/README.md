@@ -1,7 +1,9 @@
 # lambda-authorizer
 
-A REST API **REQUEST**-type Lambda authorizer, shared across all 3 REST
-APIs in the shared stack (`node`, `java`, `sap`). Per request, it:
+A REST API **REQUEST**-type Lambda authorizer, shared across both inbound
+REST APIs in the shared stack (`node`, `sap`). Java has no inbound API —
+see `terraform/shared/java_outbound.tf` — so it's not wired to this
+authorizer at all. Per request, it:
 
 1. Extracts the bearer token from `Authorization`, verifies it against the
    Cognito user pool's JWKS (signature, expiry, `token_use: access`) using
@@ -9,7 +11,7 @@ APIs in the shared stack (`node`, `java`, `sap`). Per request, it:
 2. Resolves **backend** from `event.requestContext.apiId` via
    `API_BACKEND_MAP` — not from the path, since API Gateway base-path
    mappings strip the base path before a request reaches the underlying API
-   (`custXX.aiarap.com/node/orders`, once matched by the `node` base path
+   (`{subdomain}.aiarap.com/node/orders`, once matched by the `node` base path
    mapping, arrives at the target API as `/orders`) — apiId is the only
    signal left that survives that.
 3. Resolves **environment** directly from `event.requestContext.stage`.
@@ -32,7 +34,6 @@ APIs in the shared stack (`node`, `java`, `sap`). Per request, it:
   ```hcl
   {
     "<node-api-id>" = "node"
-    "<java-api-id>" = "java"
     "<sap-api-id>"  = "sap"
   }
   ```
@@ -58,7 +59,7 @@ resource "aws_lambda_permission" "apigw" {
 }
 ```
 
-Repeat both resources for `java` and `sap`, all pointing at the same
+Repeat both resources for `sap`, pointing at the same
 `module.authorizer.invoke_arn`. Note `identity_source` no longer needs
 `Host` — environment comes from the stage, which API Gateway resolves
 before the authorizer even runs, so it can't be part of what gates caching

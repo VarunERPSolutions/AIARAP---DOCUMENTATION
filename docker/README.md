@@ -25,18 +25,26 @@ directory, or by habit) capable of restarting everything on the box at
 once. Every deploy command must `cd` into one specific `<app>/<env>/`
 directory first — `deploy.sh` does exactly that and nothing else.
 
-## Host port -> NLB target port
+## Host ports
 
-| App | Env | Container port | Host port (= NLB `target_port`) |
+| App | Env | Container port | Host port |
 |---|---|---|---|
 | node-app | dev | 3000 | 3001 |
 | node-app | qa | 3000 | 3002 |
 | java-app | dev | 8080 | 4001 |
 | java-app | qa | 8080 | 4002 |
 
-These host ports are exactly what each environment's `aws_lb_target_group`
-in `terraform/shared` should register as its `target_port` once that stack
-is reworked for per-environment routing.
+**node-app's** host ports are NLB `target_port`s — `terraform/shared`
+registers them directly, since node-app receives inbound Tenant/Salesforce
+calls.
+
+**java-app's** host ports are *not* NLB targets. Per ADR-0017, Java/Spring
+Batch is a nightly outbound-only worker (it calls out to each Tenant's SAP
+system; it never receives inbound calls) — there's no Tenant-facing API,
+Cognito scope, or NLB listener for it at all (see
+`terraform/shared/java_outbound.tf`). These ports exist only for
+local health checks/monitoring (e.g. Spring Boot Actuator) if the service
+exposes one — not part of any routing path.
 
 ## What's actually isolated, and how
 

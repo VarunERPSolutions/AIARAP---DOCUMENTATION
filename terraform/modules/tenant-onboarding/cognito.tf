@@ -1,10 +1,10 @@
 # One app client per connection x environment. Scope is restricted to exactly
 # the one backend+env this client is allowed to call — this is the actual
-# per-customer-per-backend-per-environment isolation boundary.
+# per-Tenant-per-backend-per-environment isolation boundary.
 resource "aws_cognito_user_pool_client" "conn" {
   for_each = local.connection_envs
 
-  name         = "${var.customer_id}-${each.value.conn_key}-${each.value.env}"
+  name         = "${var.subdomain}-${each.value.conn_key}-${each.value.env}"
   user_pool_id = var.cognito_user_pool_id
 
   generate_secret = true

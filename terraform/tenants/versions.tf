@@ -5,7 +5,7 @@ terraform {
     aws = {
       source = "hashicorp/aws"
       # >= 5.30 for aws_lambda_invocation's lifecycle_scope = "CRUD" (used by
-      # the customer-onboarding module's inventory writes).
+      # the tenant-onboarding module's inventory writes).
       version = ">= 5.30, < 6.0.0"
     }
   }

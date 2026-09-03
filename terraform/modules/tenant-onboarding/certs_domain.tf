@@ -1,9 +1,9 @@
 # Two SANs: bare apex (prod) + wildcard (any other single-label prefix,
 # e.g. dev/qa). A wildcard does NOT cover the apex, so both must be
 # requested explicitly on the same certificate.
-resource "aws_acm_certificate" "customer" {
-  domain_name               = "${var.customer_id}.${var.base_domain}"
-  subject_alternative_names = ["*.${var.customer_id}.${var.base_domain}"]
+resource "aws_acm_certificate" "tenant" {
+  domain_name               = "${var.subdomain}.${var.base_domain}"
+  subject_alternative_names = ["*.${var.subdomain}.${var.base_domain}"]
   validation_method         = "DNS"
 
   lifecycle {
@@ -13,7 +13,7 @@ resource "aws_acm_certificate" "customer" {
 
 resource "aws_route53_record" "cert_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.customer.domain_validation_options : dvo.domain_name => {
+    for dvo in aws_acm_certificate.tenant.domain_validation_options : dvo.domain_name => {
       name   = dvo.resource_record_name
       type   = dvo.resource_record_type
       record = dvo.resource_record_value
@@ -28,29 +28,29 @@ resource "aws_route53_record" "cert_validation" {
   allow_overwrite = true
 }
 
-resource "aws_acm_certificate_validation" "customer" {
-  certificate_arn         = aws_acm_certificate.customer.arn
+resource "aws_acm_certificate_validation" "tenant" {
+  certificate_arn         = aws_acm_certificate.tenant.arn
   validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
 }
 
 # "prd" = bare apex subdomain; every other environment gets a prefix. One
 # domain object PER ENVIRONMENT now, not apex+wildcard — dev and qa route to
-# DIFFERENT stages of the shared REST API (node-app/java-app dev and qa run
-# as separate containers even when they share an instance — see
+# DIFFERENT stages of the shared REST API (node-app dev and qa run as
+# separate containers even when they share an instance — see
 # docker/README.md), and base_path_mapping is a static (domain, path) ->
 # (api, stage) binding that can't pick a stage based on which subdomain was
 # hit. A single wildcard domain object can no longer serve both.
 locals {
   env_domain_name = {
     for env in var.environments :
-    env => env == "prd" ? "${var.customer_id}.${var.base_domain}" : "${env}.${var.customer_id}.${var.base_domain}"
+    env => env == "prd" ? "${var.subdomain}.${var.base_domain}" : "${env}.${var.subdomain}.${var.base_domain}"
   }
 }
 
 resource "aws_api_gateway_domain_name" "env" {
   for_each                 = local.env_domain_name
   domain_name              = each.value
-  regional_certificate_arn = aws_acm_certificate_validation.customer.certificate_arn
+  regional_certificate_arn = aws_acm_certificate_validation.tenant.certificate_arn
   security_policy          = "TLS_1_2"
 
   endpoint_configuration {
@@ -71,7 +71,7 @@ resource "aws_route53_record" "env_alias" {
   }
 }
 
-# One mapping per (environment, backend) — e.g. dev.custXX.aiarap.com/node
+# One mapping per (environment, backend) — e.g. dev.{subdomain}.aiarap.com/node
 # routes to node-api's "dev" stage. base_path is still the backend name
 # (stripped before the request reaches the API, same reason as before);
 # stage_name is now the environment directly, since stage IS environment by

@@ -1,0 +1,33 @@
+services:
+  node-qa:
+    # No floating :qa tag on purpose — qa is a promoted, stable target, not
+    # something that shifts every time dev rebuilds. Deploy with e.g.
+    # NODE_QA_TAG=a1b2c3d docker compose up -d — the required-var syntax
+    # below fails loudly instead of silently reusing a stale tag.
+    image: 043207749006.dkr.ecr.us-east-1.amazonaws.com/varunerp/node-app:${NODE_QA_TAG:?set NODE_QA_TAG to the commit SHA being promoted to qa}
+    container_name: node-qa
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    env_file:
+      - .env
+      - .env.secrets # fetched from Secrets Manager at deploy time, never committed
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - node-qa-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        tag: "node-qa"
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  node-qa-net:
+    driver: bridge

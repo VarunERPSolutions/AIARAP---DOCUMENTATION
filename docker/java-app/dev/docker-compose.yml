@@ -1,0 +1,31 @@
+services:
+  java-dev:
+    image: 043207749006.dkr.ecr.us-east-1.amazonaws.com/varunerp/java-app:dev
+    container_name: java-dev
+    restart: unless-stopped
+    ports:
+      # Host 4001 is the target_port this environment's NLB target group
+      # points at (see terraform/shared).
+      - "4001:8080"
+    env_file:
+      - .env
+      - .env.secrets # fetched from Secrets Manager at deploy time, never committed
+    mem_limit: 768m
+    cpus: 0.75
+    networks:
+      - java-dev-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        tag: "java-dev"
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  java-dev-net:
+    driver: bridge

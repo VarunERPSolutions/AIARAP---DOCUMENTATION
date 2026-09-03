@@ -7,12 +7,14 @@ project's own ADRs/schema docs.
 - `INFRASTRUCTURE_REFERENCE.md` — AWS + Tailscale employee access, plus a
   summary of the Tenant integration hub (§11) pointing at `terraform/` and
   `docker/` at the repo root.
-- `architecture-diagram.html` — the visual: Figure 1 (Tailscale/employee
-  access), Figure 2 (Tenant integration hub). **Stale as of the conflict
-  resolution below** — Figure 2 still shows the pre-resolution 4-box design
-  (a customer-facing Java API, "customer" terminology) and hasn't been
-  rebuilt to match `terraform/` yet. Treat `terraform/` and this README as
-  authoritative until that diagram is redone.
+- `architecture-diagram.html` — the visual, rebuilt to match: Figure 1
+  (Tailscale/employee access), Figure 2 (Tenant integration hub — 2 inbound
+  REST APIs, Tenant terminology), Figure 3 (Java's nightly outbound
+  extraction to each Tenant's SAP system, kept as its own figure rather than
+  mixed into Figure 2, since it's the opposite direction of every other
+  arrow there), and a three-call request walkthrough reflecting the
+  corrected routing (both Node examples now share one apiId, differing only
+  by stage).
 
 ## Conflicts found against this project's ADRs/schema — resolved in `terraform/`
 
@@ -41,9 +43,6 @@ project's own ADRs/schema docs.
 
 ## Still open / not built
 
-- **`architecture-diagram.html` Figure 2** needs a rebuild to match the
-  resolved design (2 inbound backends, Java shown as outbound, Tenant
-  terminology) — not done in this pass.
 - **`var.tenant_sap_secret_arn_pattern`** (`shared/variables.tf`) is a
   guessed resource pattern for Tenant SAP credential secrets, not confirmed
   against the app's actual secret-creation code. Verify before relying on

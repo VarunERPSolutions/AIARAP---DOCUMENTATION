@@ -225,9 +225,6 @@ credentials.
   private subnet IDs, the SAP tailnet-proxy instance ID, the Route53 zone ID
   for `varunerpsolutions.com`, and the `aiarap` RDS instance identifier/
   secret ARN for the inventory writer
-- `architecture-diagram.html` (Figure 2) hasn't been rebuilt to match this
-  design yet — still shows the pre-resolution 4-box layout; see
-  `docs/infra/README.md` for the full list of what changed
 
 ## 12. Outstanding / TODO
 

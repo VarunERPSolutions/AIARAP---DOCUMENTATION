@@ -1,0 +1,32 @@
+services:
+  node-dev:
+    image: 043207749006.dkr.ecr.us-east-1.amazonaws.com/varunerp/node-app:dev
+    container_name: node-dev
+    restart: unless-stopped
+    ports:
+      # Host 3001 is the target_port this environment's NLB target group
+      # points at (see terraform/shared). Only the host side differs
+      # between dev/qa — the app always listens on 3000 inside the container.
+      - "3001:3000"
+    env_file:
+      - .env
+      - .env.secrets # fetched from Secrets Manager at deploy time, never committed
+    mem_limit: 512m
+    cpus: 0.5
+    networks:
+      - node-dev-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        tag: "node-dev"
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  node-dev-net:
+    driver: bridge

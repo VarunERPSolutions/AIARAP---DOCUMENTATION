@@ -3,3 +3,16 @@ node_modules/
 .env.*
 *.log
 .DS_Store
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# .terraform.lock.hcl is intentionally NOT ignored — it should be committed
+
+# Lambda build artifacts (rebuilt by terraform apply's null_resource, not source)
+terraform/modules/*/build/
+

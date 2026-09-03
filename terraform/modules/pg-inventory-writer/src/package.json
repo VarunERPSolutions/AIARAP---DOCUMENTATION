@@ -1,0 +1,11 @@
+{
+  "name": "varunerp-pg-inventory-writer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Writes/upserts/deletes connection-inventory rows into Postgres on behalf of Terraform, since it has no VPC reachability to aiarap RDS directly.",
+  "main": "index.js",
+  "dependencies": {
+    "pg": "^8.13.0",
+    "@aws-sdk/client-secrets-manager": "^3.699.0"
+  }
+}

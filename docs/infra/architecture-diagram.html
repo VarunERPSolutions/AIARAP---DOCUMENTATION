@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VarunERP — Access &amp; Integration Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #fdfdfc;
+    --ink: #1b1e23;
+    --muted: #656b76;
+    --line: #d8dbe0;
+    --surface: #f5f6f8;
+    --surface-2: #ececee;
+    --planned: #9a6a1f;
+    --planned-line: #c99a55;
+    --tailnet: #4c4fb0;
+    --accent: #b0402f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #16181c;
+      --ink: #e7e9ec;
+      --muted: #9ba1ac;
+      --line: #34373e;
+      --surface: #1e2126;
+      --surface-2: #26292f;
+      --planned: #d9a24e;
+      --planned-line: #8a6633;
+      --tailnet: #9598e8;
+      --accent: #d97a68;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #16181c;
+    --ink: #e7e9ec;
+    --muted: #9ba1ac;
+    --line: #34373e;
+    --surface: #1e2126;
+    --surface-2: #26292f;
+    --planned: #d9a24e;
+    --planned-line: #8a6633;
+    --tailnet: #9598e8;
+    --accent: #d97a68;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, Segoe UI, Helvetica, Arial, sans-serif;
+    max-width: 1180px;
+    margin: 48px auto 80px;
+    padding: 0 24px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 23px; font-weight: 600; margin: 0 0 6px; text-wrap: balance; }
+  .subtitle { color: var(--muted); font-size: 14px; margin: 0 0 36px; max-width: 68ch; }
+  h2 { font-size: 16px; font-weight: 600; margin: 40px 0 4px; }
+  h3 { font-size: 14px; font-weight: 600; margin: 30px 0 4px; }
+  .walkthrough h3:first-of-type { margin-top: 22px; }
+  .section-note { color: var(--muted); font-size: 13px; margin: 0 0 14px; max-width: 72ch; }
+  .step { margin: 16px 0 24px; }
+  .step-label { display: block; font-size: 11.5px; font-weight: 600; color: var(--ink); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; }
+  .step-note { color: var(--muted); font-size: 12.5px; margin: 10px 2px 6px; max-width: 82ch; }
+  pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 0; }
+  pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink); }
+  figure { margin: 20px 0 0; }
+  .diagram-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  svg { display: block; min-width: 900px; }
+  figcaption { color: var(--muted); font-size: 12.5px; margin: 10px 2px 0; max-width: 82ch; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td code { background: var(--surface-2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .notes { font-size: 13.5px; padding-left: 20px; }
+  .notes li { margin-bottom: 8px; }
+  .planned-text { color: var(--planned); }
+
+  /* SVG tokens */
+  rect.box { fill: var(--surface); stroke: var(--ink); stroke-width: 1.1; opacity: 0.92; }
+  rect.box-reserved { fill: var(--surface); stroke: var(--muted); stroke-width: 1.1; opacity: 0.6; }
+  rect.box-varunerp { fill: var(--surface); stroke: var(--ink); stroke-width: 1.3; }
+  rect.box-planned { fill: var(--surface); stroke: var(--planned-line); stroke-width: 1.1; stroke-dasharray: 4 3; }
+  rect.region-dashed { fill: none; stroke: var(--muted); stroke-width: 1.1; stroke-dasharray: 5 4; }
+  rect.region-solid { fill: none; stroke: var(--ink); stroke-width: 1.3; }
+  .title-text { font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+  .sub-text { font-size: 10.8px; fill: var(--muted); }
+  .sub-text-planned { font-size: 10.8px; fill: var(--planned); }
+  .region-label { font-size: 11px; font-weight: 600; fill: var(--muted); letter-spacing: 0.03em; }
+  .flow-label { font-size: 10.5px; fill: var(--muted); }
+  .flow-label-strong { font-size: 10.5px; fill: var(--ink); font-weight: 500; }
+  .flow-label-block { font-size: 10.5px; fill: var(--accent); }
+  .flow-label-tailnet { font-size: 10.5px; fill: var(--tailnet); }
+  .title-text-planned { font-size: 12.5px; font-weight: 600; fill: var(--planned); }
+  .conn { stroke: var(--muted); stroke-width: 1.1; fill: none; }
+  .conn-planned { stroke: var(--planned-line); stroke-width: 1.1; stroke-dasharray: 4 3; fill: none; }
+  .conn-tailnet { stroke: var(--tailnet); stroke-width: 1.4; stroke-dasharray: 2 3; fill: none; }
+  .conn-block { stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 6 4; fill: none; }
+</style>
+</head>
+<body>
+
+<h1>VarunERP — Access &amp; Integration Architecture</h1>
+<p class="subtitle">Two views of the same VPC: how employees reach internal AWS servers over Tailscale, and how customer systems reach VarunERP's public APIs. Updated Sep 2026 with the customer-integration hub design (Cognito + API Gateway + Lambda authorizer), shown for two example customers.</p>
+
+<h2>1 — Employee access via Tailscale</h2>
+<p class="section-note">Every employee reaches internal servers through an authenticated WireGuard tunnel, scoped by ACL group. No server accepts direct public connections.</p>
+
+<figure>
+<div class="diagram-scroll">
+<svg viewBox="0 0 1240 620" role="img" aria-label="Diagram showing employees connecting through a Tailscale-gated mesh to AWS-hosted SAP HANA, SAP ADS, Java, Node, React and Postgres RDS servers inside a VPC, with direct public internet access blocked at the security group.">
+  <defs>
+    <marker id="arrow1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+    </marker>
+    <marker id="arrowBlock" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <text x="145" y="28" text-anchor="middle" class="region-label">EMPLOYEE DEVICES — PUBLIC INTERNET</text>
+
+  <rect class="box" x="20" y="48" width="250" height="72" rx="7"/>
+  <text x="36" y="70" class="title-text">Owner, jreddy, nchanda</text>
+  <text x="36" y="88" class="sub-text">autogroup:admin</text>
+  <text x="36" y="103" class="sub-text">full access to every server</text>
+
+  <rect class="box" x="20" y="132" width="250" height="72" rx="7"/>
+  <text x="36" y="154" class="title-text">nshaik, sshaik</text>
+  <text x="36" y="172" class="sub-text">group:sap-consultants</text>
+  <text x="36" y="187" class="sub-text">external invite, varunconsulting.com</text>
+
+  <rect class="box-reserved" x="20" y="216" width="250" height="60" rx="7"/>
+  <text x="36" y="238" class="title-text">dba · developers · qa</text>
+  <text x="36" y="256" class="sub-text">defined in ACL, no members yet</text>
+
+  <rect class="region-dashed" x="330" y="44" width="240" height="248" rx="10"/>
+  <text x="450" y="34" text-anchor="middle" class="region-label">TAILSCALE TAILNET</text>
+
+  <rect class="box" x="380" y="220" width="140" height="56" rx="7"/>
+  <text x="450" y="242" text-anchor="middle" class="title-text">ACL Policy</text>
+  <text x="450" y="258" text-anchor="middle" class="sub-text">tags + groups</text>
+
+  <polyline class="conn" points="270,84 350,84 350,248 380,248" marker-end="url(#arrow1)"/>
+  <polyline class="conn" points="270,168 360,168 360,255 380,255" marker-end="url(#arrow1)"/>
+
+  <rect class="region-dashed" x="620" y="44" width="600" height="410" rx="10"/>
+  <text x="920" y="34" text-anchor="middle" class="region-label">AWS VPC · 172.31.0.0/16 · us-east-1</text>
+
+  <rect class="box" x="645" y="68" width="260" height="66" rx="7"/>
+  <text x="661" y="88" class="title-text">sap-hana</text>
+  <text x="661" y="103" class="sub-text mono">100.95.22.28 · tag:db-servers</text>
+  <text x="661" y="117" class="sub-text mono">sapdev.varunerpsolutions.com</text>
+
+  <rect class="box" x="935" y="68" width="260" height="66" rx="7"/>
+  <text x="951" y="88" class="title-text">sap-ads</text>
+  <text x="951" y="103" class="sub-text mono">100.71.57.88 · tag:app-servers</text>
+  <text x="951" y="117" class="sub-text">NetWeaver AS Java + Adobe DS</text>
+
+  <rect class="box" x="645" y="160" width="260" height="66" rx="7"/>
+  <text x="661" y="180" class="title-text">java-app</text>
+  <text x="661" y="195" class="sub-text mono">100.88.251.5 · tag:app-servers</text>
+  <text x="661" y="209" class="sub-text">Spring Boot, dev/test</text>
+
+  <rect class="box" x="935" y="160" width="260" height="66" rx="7"/>
+  <text x="951" y="180" class="title-text">node-app</text>
+  <text x="951" y="195" class="sub-text mono">100.82.12.99 · tag:app-servers</text>
+  <text x="951" y="209" class="sub-text">Node.js, dev/test</text>
+
+  <rect class="box" x="645" y="252" width="260" height="66" rx="7"/>
+  <text x="661" y="272" class="title-text">react-app</text>
+  <text x="661" y="287" class="sub-text mono">100.70.39.7 · tag:frontend</text>
+  <text x="661" y="301" class="sub-text">React SPA, dev/test</text>
+
+  <rect class="box" x="935" y="252" width="260" height="66" rx="7"/>
+  <text x="951" y="272" class="title-text">aws-subnet-router</text>
+  <text x="951" y="287" class="sub-text mono">100.112.124.74 · tag:infra</text>
+  <text x="951" y="301" class="sub-text">advertises 172.31.0.0/16 → RDS</text>
+
+  <rect class="box" x="645" y="360" width="550" height="60" rx="7"/>
+  <text x="661" y="382" class="title-text">Postgres RDS — "aiarap"</text>
+  <text x="661" y="398" class="sub-text mono">172.31.84.146:5432 · private, no Tailscale agent</text>
+
+  <line x1="1065" y1="318" x2="1065" y2="360" class="conn" marker-end="url(#arrow1)"/>
+
+  <polyline class="conn" points="520,248 590,248 590,101 645,101" marker-end="url(#arrow1)"/>
+  <polyline class="conn" points="520,255 605,255 605,193 645,193" marker-end="url(#arrow1)"/>
+
+  <line x1="145" y1="500" x2="900" y2="500" class="conn-block"/>
+  <line x1="900" y1="500" x2="900" y2="420" class="conn-block" marker-end="url(#arrowBlock)"/>
+  <text x="520" y="490" text-anchor="middle" class="flow-label-block">any other internet host — direct connection attempt</text>
+  <text x="520" y="516" text-anchor="middle" class="flow-label-block">blocked at the security group (SSH + all SAP ports removed from 0.0.0.0/0)</text>
+</svg>
+</div>
+<figcaption>Employees reach AWS resources only through a Tailscale tunnel gated by ACL group. <code>autogroup:admin</code> reaches every server; <code>group:sap-consultants</code> reaches <code>tag:db-servers</code> + <code>tag:app-servers</code> — which currently also includes java-app and node-app alongside sap-ads (see Notes below). Postgres RDS can't run a Tailscale client, so <code>aws-subnet-router</code> advertises the VPC route on its behalf.</figcaption>
+</figure>
+
+<table>
+<tr><th>Node</th><th>Tailscale IP</th><th>ACL tag</th><th>Public hostname</th><th>Role</th></tr>
+<tr><td>sap-hana</td><td class="mono">100.95.22.28</td><td><code>tag:db-servers</code></td><td class="mono">sapdev.varunerpsolutions.com</td><td>S/4HANA app + DB (SID S4H)</td></tr>
+<tr><td>sap-ads</td><td class="mono">100.71.57.88</td><td><code>tag:app-servers</code></td><td>—</td><td>NetWeaver AS Java + Adobe Document Services</td></tr>
+<tr><td>java-app</td><td class="mono">100.88.251.5</td><td><code>tag:app-servers</code></td><td class="mono">javadev.aiarap.com</td><td>Spring Boot, dev/test</td></tr>
+<tr><td>node-app</td><td class="mono">100.82.12.99</td><td><code>tag:app-servers</code></td><td class="mono">nodedev.aiarap.com</td><td>Node.js, dev/test</td></tr>
+<tr><td>react-app</td><td class="mono">100.70.39.7</td><td><code>tag:frontend</code></td><td class="mono">reactdev.aiarap.com</td><td>React SPA, dev/test</td></tr>
+<tr><td>aws-subnet-router</td><td class="mono">100.112.124.74</td><td><code>tag:infra</code></td><td>—</td><td>Advertises 172.31.0.0/16, routes to RDS</td></tr>
+<tr><td>Postgres RDS "aiarap"</td><td class="mono">172.31.84.146:5432</td><td>—</td><td>—</td><td>No Tailscale agent; reached only via the router</td></tr>
+</table>
+
+<ul class="notes">
+  <li><strong>Public exposure removed:</strong> SSH and all SAP service ports were open to <code>0.0.0.0/0</code> on the HANA and ADS instances before this setup; all were revoked.</li>
+  <li><strong>DNS records</strong> for the four hostnames above resolve to Tailscale CGNAT addresses (<code>100.64.0.0/10</code>) — safe to publish publicly since they're unreachable off the tailnet.</li>
+  <li class="planned-text"><strong>Open item:</strong> <code>group:sap-consultants</code> was meant to grant SAP-only access, but because java-app and node-app share <code>tag:app-servers</code> with sap-ads, nshaik/sshaik currently also reach the dev servers. A separate tag would close this.</li>
+</ul>
+
+<h2>2 — Customer integration hub</h2>
+<p class="section-note">Ten customer Salesforce orgs and ten customer SAP systems call in to Node/Java; VarunERP's own Salesforce calls its own SAP the same way, since Salesforce can't run a Tailscale client either. Shown for two example customers — every additional customer repeats the same pattern. There are only <strong>3 REST APIs</strong> (node, java, sap) — every environment is a <em>stage</em> of one of these three, not a separate API.</p>
+
+<figure>
+<div class="diagram-scroll">
+<svg viewBox="0 0 1780 600" role="img" aria-label="Diagram showing two example customers' Salesforce and SAP systems, plus VarunERP's own Salesforce, authenticating via a shared Cognito pool and calling 3 public REST APIs gated by one Lambda authorizer, which forward through an internal load balancer to Node and Java app instances (each running separate dev and qa containers) and, for SAP, through a Tailscale tunnel to SAP HANA, with the not-yet-provisioned SAP production path shown faded.">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+    </marker>
+    <marker id="arrowPlanned" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--planned-line)"/>
+    </marker>
+  </defs>
+
+  <!-- Cognito -->
+  <rect class="box" x="340" y="20" width="260" height="70" rx="7"/>
+  <text x="360" y="42" class="title-text">Cognito</text>
+  <text x="360" y="58" class="sub-text mono">auth.varunerpsolutions.com</text>
+  <text x="360" y="73" class="sub-text">issues tokens + provides JWKS</text>
+
+  <!-- Customer A -->
+  <rect class="region-dashed" x="20" y="115" width="250" height="165" rx="9"/>
+  <text x="145" y="107" text-anchor="middle" class="region-label">CUSTOMER A · cust01</text>
+
+  <rect class="box" x="35" y="132" width="210" height="60" rx="6"/>
+  <text x="50" y="156" class="title-text">Salesforce</text>
+  <text x="50" y="174" class="sub-text mono">cust01.aiarap.com</text>
+
+  <rect class="box" x="35" y="204" width="210" height="60" rx="6"/>
+  <text x="50" y="228" class="title-text">SAP System</text>
+  <text x="50" y="246" class="sub-text">hosted on Azure</text>
+
+  <!-- Customer B -->
+  <rect class="region-dashed" x="20" y="300" width="250" height="165" rx="9"/>
+  <text x="145" y="292" text-anchor="middle" class="region-label">CUSTOMER B · cust02</text>
+
+  <rect class="box" x="35" y="317" width="210" height="60" rx="6"/>
+  <text x="50" y="341" class="title-text">Salesforce</text>
+  <text x="50" y="359" class="sub-text mono">cust02.aiarap.com</text>
+
+  <rect class="box" x="35" y="389" width="210" height="60" rx="6"/>
+  <text x="50" y="413" class="title-text">SAP System</text>
+  <text x="50" y="431" class="sub-text">hosted on GCP</text>
+
+  <!-- VarunERP internal -->
+  <rect class="region-solid" x="20" y="485" width="250" height="85" rx="9"/>
+  <text x="145" y="477" text-anchor="middle" class="region-label">VARUNERP · INTERNAL</text>
+
+  <rect class="box-varunerp" x="35" y="502" width="210" height="60" rx="6"/>
+  <text x="50" y="526" class="title-text">Salesforce (internal)</text>
+  <text x="50" y="544" class="sub-text">dev + prod orgs</text>
+
+  <!-- Token bracket -->
+  <polyline class="conn" points="270,197 300,197 300,55 340,55" marker-end="url(#arrow2)"/>
+  <polyline class="conn" points="270,382 300,382 300,197" />
+  <polyline class="conn" points="270,532 300,532 300,382" />
+  <text x="305" y="330" class="flow-label">① get token</text>
+  <text x="305" y="344" class="flow-label">(client_credentials)</text>
+
+  <!-- REST APIs — 3 boxes, one per backend. Environment is a STAGE of each,
+       not a separate box; see the listener/routing table below the figure. -->
+  <text x="785" y="112" text-anchor="middle" class="flow-label">② call: Bearer token + x-api-key</text>
+
+  <rect class="box" x="680" y="140" width="210" height="60" rx="6"/>
+  <text x="696" y="164" class="title-text">Node API</text>
+  <text x="696" y="182" class="sub-text">stages: dev · qa · prd</text>
+
+  <rect class="box" x="680" y="215" width="210" height="60" rx="6"/>
+  <text x="696" y="239" class="title-text">Java API</text>
+  <text x="696" y="257" class="sub-text">stages: dev · qa · prd</text>
+
+  <rect class="box" x="680" y="290" width="210" height="60" rx="6"/>
+  <text x="696" y="314" class="title-text">SAP API</text>
+  <text x="696" y="332" class="sub-text">stages: dev · prd*</text>
+
+  <!-- Authorizer — a bracket into each box's LEFT edge (routed around the
+       boxes, never through their interior), then down and over to the
+       authorizer box below. Positioned below the column, out of every
+       caller's diagonal path to it. -->
+  <line class="conn" x1="650" y1="170" x2="650" y2="320"/>
+  <line class="conn" x1="650" y1="170" x2="680" y2="170"/>
+  <line class="conn" x1="650" y1="245" x2="680" y2="245"/>
+  <line class="conn" x1="650" y1="320" x2="680" y2="320"/>
+  <polyline class="conn" points="650,320 650,380 785,380 785,410"/>
+  <rect class="box" x="690" y="410" width="190" height="90" rx="7"/>
+  <text x="706" y="432" class="title-text">Lambda Authorizer</text>
+  <text x="706" y="450" class="sub-text">gates all 3 APIs above</text>
+  <text x="706" y="466" class="sub-text">checks token scope vs</text>
+  <text x="706" y="482" class="sub-text">apiId + stage</text>
+
+  <!-- caller -> API arrows -->
+  <line class="conn" x1="245" y1="162" x2="680" y2="170" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="234" x2="680" y2="170" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="234" x2="680" y2="245" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="347" x2="680" y2="170" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="419" x2="680" y2="170" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="419" x2="680" y2="245" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="245" y1="532" x2="680" y2="308" marker-end="url(#arrow2)"/>
+  <line class="conn-planned" x1="245" y1="532" x2="680" y2="330" marker-end="url(#arrowPlanned)"/>
+
+  <!-- NLB -->
+  <rect class="box" x="980" y="213" width="220" height="64" rx="6"/>
+  <text x="998" y="237" class="title-text">Internal NLB</text>
+  <text x="998" y="255" class="sub-text">VPC Link · 8 listeners</text>
+
+  <line class="conn" x1="890" y1="170" x2="980" y2="228" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="890" y1="245" x2="980" y2="245" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="890" y1="320" x2="980" y2="262" marker-end="url(#arrow2)"/>
+
+  <!-- Backends -->
+  <rect class="box" x="1230" y="140" width="210" height="60" rx="6"/>
+  <text x="1246" y="164" class="title-text">node-app instance</text>
+  <text x="1246" y="182" class="sub-text">dev + qa containers</text>
+
+  <rect class="box" x="1230" y="215" width="210" height="60" rx="6"/>
+  <text x="1246" y="239" class="title-text">java-app instance</text>
+  <text x="1246" y="257" class="sub-text">dev + qa containers</text>
+
+  <rect class="box" x="1230" y="340" width="210" height="60" rx="6"/>
+  <text x="1246" y="364" class="title-text">tailnet-proxy (EC2)</text>
+  <text x="1246" y="382" class="sub-text">bridges into Tailscale</text>
+
+  <line class="conn" x1="1200" y1="228" x2="1230" y2="170" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="1200" y1="245" x2="1230" y2="245" marker-end="url(#arrow2)"/>
+  <line class="conn" x1="1200" y1="262" x2="1230" y2="370" marker-end="url(#arrow2)"/>
+
+  <!-- Tailscale segment -->
+  <text x="1470" y="320" text-anchor="middle" class="flow-label-tailnet">Tailscale tunnel (WireGuard)</text>
+  <line class="conn-tailnet" x1="1440" y1="365" x2="1500" y2="365" marker-end="url(#arrow2)"/>
+  <line class="conn-tailnet" x1="1440" y1="390" x2="1500" y2="465" marker-end="url(#arrowPlanned)"/>
+
+  <rect class="box" x="1500" y="330" width="260" height="78" rx="6"/>
+  <text x="1516" y="352" class="title-text">SAP HANA — S4H (dev)</text>
+  <text x="1516" y="369" class="sub-text mono">sapdev.varunerpsolutions.com</text>
+  <text x="1516" y="384" class="sub-text">Tailscale-only, port 3200</text>
+
+  <rect class="box-planned" x="1500" y="430" width="260" height="78" rx="6"/>
+  <text x="1516" y="452" class="title-text-planned">SAP HANA — prod</text>
+  <text x="1516" y="469" class="sub-text-planned mono">sap.varunerpsolutions.com</text>
+  <text x="1516" y="484" class="sub-text-planned">not yet provisioned</text>
+</svg>
+</div>
+<figcaption>Every caller first exchanges its client credentials for a Cognito access token (①), then calls its REST API with that token plus a per-connection API key (②) — the key is for throttling/metering only, the token is the actual authentication. One Lambda authorizer, invoked per request by API Gateway, gates all three REST APIs by checking the token's scope against which API and which <em>stage</em> was called — stage tells the authorizer the environment directly, no Host-header parsing involved. node-app and java-app are single instances today, each running separate dev and qa containers (see <code>docker/README.md</code>); SAP's prd stage (faded, marked *) mirrors this same shape and activates once that HANA system exists.</figcaption>
+</figure>
+
+<h3 style="font-size:14px;">Listener ports and routing logic</h3>
+<p class="section-note">Each backend is <strong>one REST API with one deployment</strong> (identical resources/methods/integrations across its environments) and <strong>one stage per environment</strong>. Every stage carries its own <code>gwPort</code> stage variable; the integration URI is <code>http://&lt;nlb-dns&gt;:${stageVariables.gwPort}/...</code>, which API Gateway substitutes per-request from whichever stage actually handled the call. That's what lets 3 REST APIs serve 8 physically distinct listener ports below without needing one API per port — and it's also why the authorizer can read environment straight off <code>requestContext.stage</code> instead of parsing anything.</p>
+
+<table>
+<tr><th>Backend</th><th>Stage</th><th>NLB listener port</th><th>Target</th><th>Status</th></tr>
+<tr><td>node</td><td class="mono">dev</td><td class="mono">3001</td><td class="mono">i-0e8bb91b84754d419:3001</td><td>live</td></tr>
+<tr><td>node</td><td class="mono">qa</td><td class="mono">3002</td><td class="mono">i-0e8bb91b84754d419:3002</td><td>live</td></tr>
+<tr><td class="planned-text">node</td><td class="mono planned-text">prd</td><td class="mono planned-text">3000</td><td class="mono planned-text">placeholder instance ID</td><td class="planned-text">not provisioned</td></tr>
+<tr><td>java</td><td class="mono">dev</td><td class="mono">4001</td><td class="mono">i-01afdc2668e71f05b:4001</td><td>live</td></tr>
+<tr><td>java</td><td class="mono">qa</td><td class="mono">4002</td><td class="mono">i-01afdc2668e71f05b:4002</td><td>live</td></tr>
+<tr><td class="planned-text">java</td><td class="mono planned-text">prd</td><td class="mono planned-text">8080</td><td class="mono planned-text">placeholder instance ID</td><td class="planned-text">not provisioned</td></tr>
+<tr><td>sap</td><td class="mono">dev</td><td class="mono">8083</td><td class="mono">tailnet-proxy:8083 → sapdev.varunerpsolutions.com</td><td>live</td></tr>
+<tr><td class="planned-text">sap</td><td class="mono planned-text">prd</td><td class="mono planned-text">TBD</td><td class="mono planned-text">tailnet-proxy → sap.varunerpsolutions.com</td><td class="planned-text">not provisioned</td></tr>
+</table>
+
+<table>
+<tr><th>Connection</th><th>Auth</th><th>Public host</th><th>Backend</th></tr>
+<tr><td>Customer Salesforce → Node</td><td class="mono">node.invoke.{env}</td><td class="mono">{env}.custXX.aiarap.com</td><td>node-app</td></tr>
+<tr><td>Customer SAP → Node</td><td class="mono">node.invoke.{env}</td><td class="mono">{env}.custXX.aiarap.com</td><td>node-app</td></tr>
+<tr><td>Customer SAP → Java</td><td class="mono">java.invoke.{env}</td><td class="mono">{env}.custXX.aiarap.com</td><td>java-app</td></tr>
+<tr><td>VarunERP Salesforce → SAP (dev)</td><td class="mono">sap.invoke.dev</td><td class="mono">dev.sap-api.varunerpsolutions.com</td><td>SAP HANA (dev)</td></tr>
+<tr><td class="planned-text">VarunERP Salesforce → SAP (prod)</td><td class="mono planned-text">sap.invoke.prd</td><td class="mono planned-text">sap-api.varunerpsolutions.com</td><td class="planned-text">SAP HANA (prod) — planned</td></tr>
+</table>
+
+<ul class="notes">
+  <li><strong>Per-connection isolation:</strong> every customer gets its own Cognito app client and API key per backend per environment — a leaked credential for one customer's Node connection can't be replayed against their Java connection or another customer's data.</li>
+  <li><strong>Prod is the bare subdomain:</strong> <code>custXX.aiarap.com</code> = prod, <code>dev.custXX.aiarap.com</code>/<code>qa.custXX.aiarap.com</code> = non-prod — same convention on the SAP side (<code>sap-api.varunerpsolutions.com</code> vs <code>dev.sap-api.varunerpsolutions.com</code>). Each environment is its own API Gateway custom domain object now (not an apex+wildcard pair) since dev/qa route to different stages — a wildcard domain can't pick a stage based on which subdomain was hit.</li>
+  <li><strong>Not the same hostnames as Figure 1:</strong> the SAP API domains above are new, genuinely public endpoints — deliberately distinct from <code>sapdev.varunerpsolutions.com</code>, which resolves to an unroutable Tailscale address and stays internal-only.</li>
+  <li class="planned-text"><strong>Open item:</strong> SAP prod and node/java prod (HANA instance / dedicated EC2 instances, plus — for SAP — the tailnet-proxy forwarding rule) aren't provisioned yet — everything marked planned/faded above activates once each real instance ID replaces its placeholder.</li>
+</ul>
+
+<h2>3 — Example: three calls to add two numbers</h2>
+<p class="section-note">Same toy contract on all three routes — <code>POST .../add</code> with <code>{"a": 2, "b": 3}</code>, expecting <code>{"sum": 5}</code> back — so the only thing that varies below is which backend the call reaches and by which path. Each example shows the request at four points: as the caller sends it, what the Lambda authorizer decides, what reaches the NLB, and what the NLB forwards on.</p>
+
+<div class="walkthrough">
+
+<h3>A — Customer A's Salesforce → Node (dev)</h3>
+<p class="section-note"><code>cust01</code>'s Salesforce calling its dev environment. Client <code>cust01-sf-node-dev</code>, scope <code>node.invoke.dev</code>.</p>
+
+<div class="step"><span class="step-label">① Request as sent by Salesforce — before Lambda runs</span>
+<pre><code>POST /node/add HTTP/1.1
+Host: dev.cust01.aiarap.com
+Authorization: Bearer eyJraWQiOiJhYmMxMjMiLCJhbGciOiJSUzI1NiJ9...&lt;truncated&gt;
+x-api-key: 8f3a1c2e-cust01-sf-node-dev
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+<p class="step-note">Decoded token payload, for reference — API Gateway hasn't touched this yet, it's exactly what Salesforce's HTTP client sent:</p>
+<pre><code>{
+  "client_id": "cust01-sf-node-dev",
+  "scope": "https://api.aiarap.com/node/node.invoke.dev",
+  "token_use": "access",
+  "iss": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_ExAmPle",
+  "exp": 1893456000
+}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">② The Lambda authorizer's decision</span>
+<p class="step-note">What it receives (abbreviated) — apiId and stage are already resolved by API Gateway before the authorizer runs:</p>
+<pre><code>{
+  "requestContext": { "apiId": "a1b2c3d4e5", "stage": "dev" },
+  "methodArn": "arn:aws:execute-api:us-east-1:043207749006:a1b2c3d4e5/dev/POST/add"
+}</code></pre>
+<p class="step-note">What it returns — required scope was <code>node.invoke.dev</code> (backend "node" from apiId, environment "dev" from stage); the token has it, so:</p>
+<pre><code>{
+  "principalId": "cust01-sf-node-dev",
+  "policyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [{ "Action": "execute-api:Invoke", "Effect": "Allow",
+      "Resource": "arn:aws:execute-api:us-east-1:043207749006:a1b2c3d4e5/dev/*/*" }]
+  },
+  "context": { "backend": "node", "environment": "dev", "scope": "node.invoke.dev" }
+}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">③ Request as it reaches the NLB</span>
+<p class="step-note">The <code>/node</code> base path is already stripped; <code>${stageVariables.gwPort}</code> resolved to <strong>3001</strong> — node-dev's listener port:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:3001
+X-Forwarded-Host: dev.cust01.aiarap.com
+X-Forwarded-For: 203.0.113.42
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">④ Request as it leaves the NLB</span>
+<p class="step-note">The NLB is Layer 4 — it forwards the TCP connection to the target unchanged, it doesn't rewrite HTTP content. Arrives at <code>i-0e8bb91b84754d419:3001</code>, the node-dev container:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:3001
+X-Forwarded-Host: dev.cust01.aiarap.com
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+<p class="step-note">node-dev responds: <code>{"sum": 5}</code></p>
+</div>
+
+<h3>B — Customer A's SAP → Java (qa)</h3>
+<p class="section-note"><code>cust01</code>'s SAP system calling its qa environment. Client <code>cust01-sap-java-qa</code>, scope <code>java.invoke.qa</code>.</p>
+
+<div class="step"><span class="step-label">① Request as sent by the SAP system</span>
+<pre><code>POST /java/add HTTP/1.1
+Host: qa.cust01.aiarap.com
+Authorization: Bearer eyJraWQiOiJkZWY0NTYiLCJhbGciOiJSUzI1NiJ9...&lt;truncated&gt;
+x-api-key: c72e9b41-cust01-sap-java-qa
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">② The Lambda authorizer's decision</span>
+<pre><code>{
+  "requestContext": { "apiId": "f6g7h8i9j0", "stage": "qa" },
+  "methodArn": "arn:aws:execute-api:us-east-1:043207749006:f6g7h8i9j0/qa/POST/add"
+}</code></pre>
+<p class="step-note">Required scope <code>java.invoke.qa</code> (backend "java" from apiId, environment "qa" from stage) — present, so Allow:</p>
+<pre><code>{
+  "principalId": "cust01-sap-java-qa",
+  "policyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [{ "Action": "execute-api:Invoke", "Effect": "Allow",
+      "Resource": "arn:aws:execute-api:us-east-1:043207749006:f6g7h8i9j0/qa/*/*" }]
+  },
+  "context": { "backend": "java", "environment": "qa", "scope": "java.invoke.qa" }
+}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">③ Request as it reaches the NLB</span>
+<p class="step-note"><code>gwPort</code> resolved to <strong>4002</strong> — java-qa's listener port:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:4002
+X-Forwarded-Host: qa.cust01.aiarap.com
+X-Forwarded-For: 198.51.100.17
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">④ Request as it leaves the NLB</span>
+<p class="step-note">Arrives at <code>i-01afdc2668e71f05b:4002</code>, the java-qa container:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:4002
+X-Forwarded-Host: qa.cust01.aiarap.com
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+<p class="step-note">java-qa responds: <code>{"sum": 5}</code></p>
+</div>
+
+<h3>C — VarunERP's own Salesforce → SAP (dev)</h3>
+<p class="section-note">Flow 2 — VarunERP's internal Salesforce dev org calling its own SAP dev system. Client <code>varunerp-sf-sap-dev</code>, scope <code>sap.invoke.dev</code>. Root-mapped domain, no base path to strip. Illustrative only: SAP's own "add" would really be an RFC/OData call, not a plain REST body — kept as JSON here for a consistent example across all three routes.</p>
+
+<div class="step"><span class="step-label">① Request as sent by VarunERP's Salesforce</span>
+<pre><code>POST /add HTTP/1.1
+Host: dev.sap-api.varunerpsolutions.com
+Authorization: Bearer eyJraWQiOiJnaGkzMjEiLCJhbGciOiJSUzI1NiJ9...&lt;truncated&gt;
+x-api-key: 5d9f2a77-varunerp-sf-sap-dev
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">② The Lambda authorizer's decision</span>
+<pre><code>{
+  "requestContext": { "apiId": "k1l2m3n4o5", "stage": "dev" },
+  "methodArn": "arn:aws:execute-api:us-east-1:043207749006:k1l2m3n4o5/dev/POST/add"
+}</code></pre>
+<p class="step-note">Required scope <code>sap.invoke.dev</code> — present, so Allow:</p>
+<pre><code>{
+  "principalId": "varunerp-sf-sap-dev",
+  "policyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [{ "Action": "execute-api:Invoke", "Effect": "Allow",
+      "Resource": "arn:aws:execute-api:us-east-1:043207749006:k1l2m3n4o5/dev/*/*" }]
+  },
+  "context": { "backend": "sap", "environment": "dev", "scope": "sap.invoke.dev" }
+}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">③ Request as it reaches the NLB</span>
+<p class="step-note"><code>gwPort</code> resolved to <strong>8083</strong> — sap-dev's listener port, the same port <code>var.sap_environments.dev.port</code> sets in Terraform:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:8083
+X-Forwarded-Host: dev.sap-api.varunerpsolutions.com
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+</div>
+
+<div class="step"><span class="step-label">④ Request as it leaves the NLB</span>
+<p class="step-note">Arrives at the tailnet-proxy EC2, port 8083 — this is as far as the NLB is involved. From here the proxy forwards it over the Tailscale tunnel to <code>sapdev.varunerpsolutions.com:3200</code>, outside this walkthrough's scope:</p>
+<pre><code>POST /add HTTP/1.1
+Host: internal-varunerp-nlb-1a2b3c4d.elb.us-east-1.amazonaws.com:8083
+X-Forwarded-Host: dev.sap-api.varunerpsolutions.com
+Content-Type: application/json
+
+{"a": 2, "b": 3}</code></pre>
+<p class="step-note">SAP dev responds (via the tailnet-proxy, unwound back through the same path): <code>{"sum": 5}</code></p>
+</div>
+
+</div>
+
+</body>
+</html>

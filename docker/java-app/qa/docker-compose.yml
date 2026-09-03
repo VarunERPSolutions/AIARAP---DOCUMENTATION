@@ -1,0 +1,30 @@
+services:
+  java-qa:
+    # No floating :qa tag on purpose — see node-app/qa/docker-compose.yml.
+    image: 043207749006.dkr.ecr.us-east-1.amazonaws.com/varunerp/java-app:${JAVA_QA_TAG:?set JAVA_QA_TAG to the commit SHA being promoted to qa}
+    container_name: java-qa
+    restart: unless-stopped
+    ports:
+      - "4002:8080"
+    env_file:
+      - .env
+      - .env.secrets # fetched from Secrets Manager at deploy time, never committed
+    mem_limit: 768m
+    cpus: 0.75
+    networks:
+      - java-qa-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        tag: "java-qa"
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  java-qa-net:
+    driver: bridge

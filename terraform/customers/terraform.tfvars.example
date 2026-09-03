@@ -1,0 +1,26 @@
+route53_zone_id      = "Z0123456789ABCDEFGHIJ"
+cognito_user_pool_id = "us-east-1_XXXXXXXXX"
+api_ids = {
+  node = "abc123defg"
+  java = "hij456klmn"
+}
+
+customers = {
+  # Standard customer — default 3 connections x 3 environments, default throttle.
+  cust01 = {}
+
+  # Customer without a Java-side SAP integration yet — only 2 connection types.
+  cust02 = {
+    connections = [
+      { key = "sf-node", backend = "node" },
+      { key = "sap-node", backend = "node" },
+    ]
+  }
+
+  # Higher-volume customer — bump prod limits for their SAP->Java connection.
+  cust03 = {
+    throttle_overrides = {
+      "sap-java-prd" = { rate_limit = 50, burst_limit = 100, quota_limit = 250000 }
+    }
+  }
+}

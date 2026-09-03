@@ -1,0 +1,26 @@
+services:
+  react-external-app-dev:
+    image: 043207749006.dkr.ecr.us-east-1.amazonaws.com/varunerp/react-external-app:dev
+    container_name: react-external-app-dev
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    mem_limit: 256m
+    cpus: 0.25
+    networks:
+      - react-external-app-dev-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        tag: "react-external-app-dev"
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  react-external-app-dev-net:
+    driver: bridge

@@ -60,6 +60,14 @@ variable "tenant_sap_secret_arn_pattern" {
   default     = "arn:aws:secretsmanager:*:*:secret:aiarap/tenant/*/sap-*"
 }
 
+# --- React frontends (CI deploy target only — not otherwise routed by this stack) ---
+
+variable "react_app_instance_id" {
+  description = "EC2 instance running both React apps' dev containers (external-app, support-app share this box — see docker/README.md). Used only to scope the GitHub Actions CI role's ssm:SendCommand permission (ci.tf); this stack doesn't otherwise manage react-app's infrastructure."
+  type        = string
+  default     = "i-0404b22a0807d70b3" # per INFRASTRUCTURE_REFERENCE.md
+}
+
 # --- SAP backend ---
 
 variable "sap_proxy_instance_id" {

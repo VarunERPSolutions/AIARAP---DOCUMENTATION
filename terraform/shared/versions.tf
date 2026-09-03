@@ -8,6 +8,10 @@ terraform {
       # transitively via modules/pg-inventory-writer).
       version = ">= 5.30, < 6.0.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = ">= 4.0.0"
+    }
   }
 }
 

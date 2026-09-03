@@ -12,10 +12,20 @@ docker/
 ├── node-app/
 │   ├── dev/  { docker-compose.yml, .env.example }
 │   └── qa/   { docker-compose.yml, .env.example }
-└── java-app/
-    ├── dev/  { docker-compose.yml, .env.example }
-    └── qa/   { docker-compose.yml, .env.example }
+├── java-app/
+│   ├── dev/  { docker-compose.yml, .env.example }
+│   └── qa/   { docker-compose.yml, .env.example }
+├── react-external-app/
+│   └── dev/  { docker-compose.yml }
+└── react-support-app/
+    └── dev/  { docker-compose.yml }
 ```
+
+The two React apps are static nginx builds — no `.env`/`.env.secrets`
+(anything they need is baked in at `npm run build` time, see each repo's
+`Dockerfile`), and no `qa/` yet — CI only drives the `dev` branch today (see
+the repos' `.github/workflows/deploy-dev.yml`); qa promotion for them is a
+deliberate follow-up, same as it already is for node-app/java-app.
 
 Each `docker-compose.yml` is a **separate compose project** — its own
 directory, its own container name, its own Docker network. There is
@@ -33,6 +43,12 @@ directory first — `deploy.sh` does exactly that and nothing else.
 | node-app | qa | 3000 | 3002 |
 | java-app | dev | 8080 | 4001 |
 | java-app | qa | 8080 | 4002 |
+| react-external-app | dev | 80 | 8081 |
+| react-support-app | dev | 80 | 8083 |
+
+Both React apps' dev containers share the `react-app` EC2 instance (see
+`docs/infra/INFRASTRUCTURE_REFERENCE.md` §2) — host ports 8082/8084 are
+reserved for their future `qa` environments, not yet created.
 
 **node-app's** host ports are NLB `target_port`s — `terraform/shared`
 registers them directly, since node-app receives inbound Tenant/Salesforce

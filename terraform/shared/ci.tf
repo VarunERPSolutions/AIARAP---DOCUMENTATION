@@ -14,9 +14,21 @@ locals {
     "react-support-app"  = "VarunERPSolutions/AIARAP-support-app"
   }
 
+  # GitHub now issues OIDC `sub` claims with immutable org/repo IDs appended
+  # (e.g. `VarunERPSolutions@291509345/AIARAP-spring-backend@1353664849`) to
+  # prevent claim reuse after a rename. The trust policy below matches both
+  # this form and the plain org/repo form, since which one GitHub actually
+  # sends isn't guaranteed to stay consistent across all repos/time.
+  ci_repos_immutable_id = {
+    "node-app"           = "VarunERPSolutions@291509345/AIARAP-node-backend@1353664272"
+    "java-app"           = "VarunERPSolutions@291509345/AIARAP-spring-backend@1353664849"
+    "react-external-app" = "VarunERPSolutions@291509345/AIARAP-external-app@1353662238"
+    "react-support-app"  = "VarunERPSolutions@291509345/AIARAP-support-app@1353662817"
+  }
+
   # instance_id per app that the CI role is allowed to ssm:SendCommand against.
   ci_deploy_instance_ids = {
-    "node-app"           = var.node_environments["dev"].instance_id
+    "node-app"           = var.node_app_instance_id
     "java-app"           = var.java_app_instance_id
     "react-external-app" = var.react_app_instance_id
     "react-support-app"  = var.react_app_instance_id
@@ -81,7 +93,10 @@ data "aws_iam_policy_document" "github_actions_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for repo in local.ci_repos : "repo:${repo}:ref:refs/heads/dev"]
+      values = concat(
+        [for repo in local.ci_repos : "repo:${repo}:ref:refs/heads/dev"],
+        [for repo in local.ci_repos_immutable_id : "repo:${repo}:ref:refs/heads/dev"],
+      )
     }
   }
 }
@@ -106,6 +121,11 @@ data "aws_iam_policy_document" "github_actions_ci" {
       "ecr:InitiateLayerUpload",
       "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload",
+      # buildx's attestation/provenance manifest-list push reads back
+      # existing manifests/layers even on a fresh push — plain upload
+      # actions aren't enough (denied: ecr:BatchGetImage).
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
     ]
     resources = [for r in aws_ecr_repository.app : r.arn]
   }

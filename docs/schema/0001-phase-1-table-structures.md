@@ -46,7 +46,6 @@ CREATE TABLE global.tenant_registry (
     id                            UUID PRIMARY KEY DEFAULT uuidv7(),
     subdomain                     TEXT NOT NULL UNIQUE,
     schema_name                   TEXT NOT NULL UNIQUE,
-    stripe_connected_account_id   TEXT UNIQUE,  -- ROUTING POINTER ONLY, not a Stripe "setting" — an opaque ID with no config/credentials attached, kept here purely so the webhook receiver can resolve the {tenant} schema before it can query anything tenant-specific (same bootstrap-necessity reasoning as subdomain/schema_name). The authoritative, app-facing copy — plus stripe_enabled and anything else Stripe-related — lives in tenant_settings (ADR-0020); the app layer keeps this pointer in sync with that copy at write time, same denormalization convention used elsewhere in this doc (e.g. card_payment_attempt.payer_id).
     status                        TEXT NOT NULL DEFAULT 'provisioning'
                                   CHECK (status IN ('provisioning', 'active', 'suspended', 'deprovisioned')),
     created_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -54,9 +53,25 @@ CREATE TABLE global.tenant_registry (
     updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by                    UUID
 );
--- stripe_connected_account_id's plain UNIQUE (not a partial index) is
--- sufficient even though the column is nullable — Postgres UNIQUE
--- constraints treat multiple NULLs as non-conflicting.
+-- stripe_connected_account_id used to live here as a single routing-only
+-- pointer per Tenant (ADR-0020's original "one connected account per
+-- Tenant" design). Removed (ADR-0020 update): Stripe Connect moved to
+-- one account per Company Code, so a Tenant can now own several
+-- Connected Account IDs — a single column can no longer hold the
+-- routing pointer. Replaced by global.stripe_account_routing below, a
+-- proper one-row-per-account lookup table.
+CREATE TABLE global.stripe_account_routing (
+    connected_account_id  TEXT PRIMARY KEY,  -- ROUTING POINTER ONLY, same "opaque ID with no config/credentials attached" treatment the single column used to have — kept here purely so the webhook receiver can resolve the {tenant} schema before it can query anything tenant-specific
+    tenant_registry_id     UUID NOT NULL REFERENCES global.tenant_registry(id),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by              UUID
+);
+CREATE INDEX ON global.stripe_account_routing (tenant_registry_id);
+-- The authoritative, app-facing copy of each Connected Account ID — plus
+-- stripe_enabled and everything else Stripe-related — lives on that
+-- Company Code's own row in {tenant}.company_code; the app layer inserts/
+-- keeps a matching row here in sync at write time, same denormalization
+-- convention used elsewhere in this doc (e.g. card_payment_attempt.payer_id).
 
 -- Normalized in place of fixed primary/secondary columns — any number of
 -- contacts per Tenant, not capped at 2. Mirrors the is_primary pattern
@@ -161,8 +176,9 @@ CREATE TABLE tenant_settings (
     tenant_registry_id                   UUID NOT NULL REFERENCES global.tenant_registry(id),
     branding_logo_s3_key                 TEXT,  -- S3 object key, not a public URL; uploaded once, display URL (CDN/presigned) resolved at request time so a bucket/CDN change never breaks stored data
     branding_primary_color               TEXT,
-    minimum_partial_payment_amount       NUMERIC(14,3) NOT NULL DEFAULT 0,  -- scale 3 to accommodate 3-decimal currencies (BHD/KWD/OMR); decimal-place validation against currency.minor_unit happens at the application layer
-    minimum_partial_payment_currency     TEXT NOT NULL DEFAULT 'USD' REFERENCES currency(code),
+    -- minimum_card_payment_amount and its ACH/SEPA counterparts moved to
+    -- company_code (ADR-0032 update) — see that table's own comment for
+    -- why. No tenant-wide minimum-payment fields remain here.
     sap_system_of_record_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
     salesforce_system_of_record_enabled  BOOLEAN NOT NULL DEFAULT FALSE,
     sap_connection_endpoint              TEXT,
@@ -189,11 +205,13 @@ CREATE TABLE tenant_settings (
     sso_enabled                          BOOLEAN NOT NULL DEFAULT FALSE,
     sso_provider_type                    TEXT CHECK (sso_provider_type IN ('saml', 'oidc')),
     sso_metadata_secret_ref              TEXT,
-    stripe_enabled                       BOOLEAN NOT NULL DEFAULT FALSE,  -- not every Tenant uses Stripe/card payments (ADR-0020); gates the Automatic Card Payment batch, Card Expiry Alert, and webhook processing for this Tenant
-    stripe_connected_account_id          TEXT,  -- authoritative, app-facing copy of the Stripe Connect account ID (ADR-0020); global.tenant_registry keeps a routing-only pointer to the same value, kept in sync at write time
-    stripe_disconnected_at               TIMESTAMPTZ,  -- set when a Tenant disconnects Stripe (ADR-0020); stripe_connected_account_id is deliberately NOT cleared on disconnect — kept as a historical record, same "deactivation not deletion" convention used elsewhere, and both routing-pointer copies stay intact so any late in-flight webhook for a pre-disconnect charge still resolves to the right Tenant rather than being orphaned
-    stripe_payout_interval                TEXT CHECK (stripe_payout_interval IN ('daily', 'weekly', 'monthly', 'manual')),  -- synced from Stripe's Account API (settings.payouts.schedule), not manually configured — refreshed by the Stripe Payout Reconciliation job (ADR-0025) each run so a Tenant changing their payout schedule directly in Stripe stays reflected here automatically
-    stripe_payout_delay_days              INTEGER,  -- synced alongside stripe_payout_interval; drives the reconciliation grace-period window (parking lot item 23, resolved) — NULL until first synced, in which case the job falls back to the 5-day platform default
+    -- Stripe Connect fields (stripe_enabled, stripe_connected_account_id,
+    -- stripe_disconnected_at, stripe_payout_interval,
+    -- stripe_payout_delay_days) moved to company_code (ADR-0020 update) —
+    -- one Connected Account per Company Code, not one per Tenant. See
+    -- company_code's own comment for why, and
+    -- global.stripe_account_routing for the webhook-routing change this
+    -- required.
     sap_webhook_secret_ref               TEXT,  -- AWS Secrets Manager ARN — shared secret configured on the Tenant's SAP outbound side (e.g. an HTTP destination or CPI/PI channel), used to authenticate inbound calls to the SAP Payment Webhook (ADR-0022). Routing itself doesn't need a new global field — the webhook URL AIARAP issues already embeds this Tenant's subdomain (global.tenant_registry.subdomain), unlike Stripe's opaque connected-account-id routing
     card_auto_pay_max_failed_attempts    INTEGER NOT NULL DEFAULT 3,  -- Tenant-configurable threshold: consecutive Automatic Card Payment batch failures before a card is excluded from future auto-pay runs (payer_payment_card.auto_pay_blocked, ADR-0019)
     sms_notifications_enabled            BOOLEAN NOT NULL DEFAULT FALSE,  -- gates SMS as a Notification Channel once built; Email is the only implementation in Phase 1
@@ -448,9 +466,22 @@ CREATE INDEX ON payer_hierarchy (parent_payer_id);
 -- interface rather than Stripe-specific column names. Owned by a Payer; a
 -- card registered by a parent Payer can optionally be shared for use by its
 -- children (resolved via payer_hierarchy) through allow_child_use.
+-- company_code (ADR-0020 update, Stripe Connect moved to per-Company-Code)
+-- is now required and structural, not just informational: a Stripe
+-- Connect Standard account is a genuinely separate underlying Stripe
+-- account per Company Code, so a card token
+-- (provider_payment_method_ref) registered under one Company Code's
+-- account is NOT valid/chargeable under another — the Payer must register
+-- separately per Company Code if they have open Invoices under more than
+-- one. allow_child_use sharing is scoped by the SAME company_code as a
+-- consequence (a shared card only works for a child Payer's charges under
+-- that identical Company Code, checked at the application layer alongside
+-- the existing payer_hierarchy check). is_primary is now scoped per
+-- (payer_id, company_code), not per Payer alone, for the same reason.
 CREATE TABLE payer_payment_card (
     id                           UUID PRIMARY KEY DEFAULT uuidv7(),
     payer_id                     UUID NOT NULL REFERENCES payer(id),  -- owning Payer
+    company_code                 TEXT NOT NULL REFERENCES company_code(code),  -- which Company Code's Stripe Connected Account this token was registered under
     provider                     TEXT NOT NULL DEFAULT 'stripe',      -- generic per ADR-0001; not assumed to stay Stripe-only
     provider_customer_ref        TEXT,           -- e.g. Stripe Customer ID (cus_xxx)
     provider_payment_method_ref  TEXT NOT NULL,  -- e.g. Stripe PaymentMethod ID (pm_xxx) — the actual token
@@ -459,7 +490,7 @@ CREATE TABLE payer_payment_card (
     card_exp_month               SMALLINT,
     card_exp_year                SMALLINT,
     is_primary                   BOOLEAN NOT NULL DEFAULT FALSE,
-    allow_child_use              BOOLEAN NOT NULL DEFAULT FALSE,  -- can a child Payer (per payer_hierarchy, any sales area, currently valid) charge this card?
+    allow_child_use              BOOLEAN NOT NULL DEFAULT FALSE,  -- can a child Payer (per payer_hierarchy, any sales area, currently valid) charge this card, for that same company_code's Invoices?
     consecutive_failed_attempts  INTEGER NOT NULL DEFAULT 0,  -- reset to 0 on any successful card_payment_attempt; incremented on each failed one, drives auto_pay_blocked below (ADR-0019)
     auto_pay_blocked             BOOLEAN NOT NULL DEFAULT FALSE,  -- set once consecutive_failed_attempts reaches tenant_settings.card_auto_pay_max_failed_attempts — excludes this card from the Automatic Card Payment batch ONLY; distinct from status, since the Payer can still see/retry it manually in the portal
     auto_pay_blocked_at          TIMESTAMPTZ,
@@ -469,30 +500,45 @@ CREATE TABLE payer_payment_card (
     created_by                   UUID,
     updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by                   UUID,
-    UNIQUE (provider, provider_payment_method_ref)
+    CONSTRAINT payer_payment_card_company_code_fk
+        FOREIGN KEY (payer_id, company_code)
+        REFERENCES payer_company_code (payer_id, company_code),
+    UNIQUE (provider, provider_payment_method_ref),
+    UNIQUE (id, company_code)  -- enables payer_card_payment_policy's composite FK below, ensuring a policy's company_code always matches its card's own
 );
 CREATE INDEX ON payer_payment_card (payer_id);
--- at most one active primary per Payer; same convention as tenant_contact/contact
-CREATE UNIQUE INDEX ON payer_payment_card (payer_id) WHERE is_primary AND status = 'active';
+CREATE INDEX ON payer_payment_card (payer_id, company_code);
+-- at most one active primary per Payer PER Company Code (not per Payer alone — a Payer can have a distinct primary card per Company Code's Stripe account)
+CREATE UNIQUE INDEX ON payer_payment_card (payer_id, company_code) WHERE is_primary AND status = 'active';
 
 -- Per-card policy: which Invoice types a specific stored card may be used
 -- for, within what Company Code, within what time window, and up to what
 -- amount per charge. invoice_type now references the invoice_type table
 -- (Core AR/AP domain, further down this file — extracted per Tenant from
 -- their SAP billing-type customizing, TVFK-equivalent) rather than staying
--- plain TEXT. company_code likewise gets a real composite FK —
--- payer_company_code is the local source of truth for which company codes
--- exist for this Payer (not mirrored SAP data with nothing local to check
--- against), preventing a policy from ever pointing at a company code the
--- Payer doesn't actually have on file. payer_id is denormalized alongside
--- payer_payment_card_id for query convenience — the app layer keeps it
--- consistent with the card's own payer_id at write time, same as the
--- overlap rule below.
+-- plain TEXT — a forward reference within this doc, same as company_code
+-- below now is against the company_code table (further down this file
+-- still at the time this comment was written, promoted alongside Sales
+-- Order checkout, ADR-0029). company_code also gets a real composite FK
+-- into payer_company_code — payer_company_code is the local source of
+-- truth for which company codes exist for this Payer (not mirrored SAP
+-- data with nothing local to check against), preventing a policy from ever
+-- pointing at a company code the Payer doesn't actually have on file.
+-- payer_id is denormalized alongside payer_payment_card_id for query
+-- convenience — the app layer keeps it consistent with the card's own
+-- payer_id at write time, same as the overlap rule below.
+-- payer_card_payment_policy_card_company_code_fk (ADR-0020 update) is new:
+-- since payer_payment_card.company_code is now structural (a card only
+-- exists within one Company Code's Stripe Connected Account), a policy's
+-- own company_code must match the card it's authorizing — enforced as a
+-- real composite FK against payer_payment_card's own (id, company_code)
+-- uniqueness, not just an app-layer check, so a policy can never
+-- reference a company_code its card wasn't actually registered under.
 CREATE TABLE payer_card_payment_policy (
     id                     UUID PRIMARY KEY DEFAULT uuidv7(),
     payer_id               UUID NOT NULL REFERENCES payer(id),
     payer_payment_card_id  UUID NOT NULL REFERENCES payer_payment_card(id),
-    company_code           TEXT NOT NULL,
+    company_code           TEXT NOT NULL REFERENCES company_code(code),
     invoice_type           TEXT NOT NULL REFERENCES invoice_type(code),
     valid_from             DATE NOT NULL,
     valid_to               DATE,  -- NULL = open-ended
@@ -507,6 +553,9 @@ CREATE TABLE payer_card_payment_policy (
     CONSTRAINT payer_card_payment_policy_company_code_fk
         FOREIGN KEY (payer_id, company_code)
         REFERENCES payer_company_code (payer_id, company_code),
+    CONSTRAINT payer_card_payment_policy_card_company_code_fk
+        FOREIGN KEY (payer_payment_card_id, company_code)
+        REFERENCES payer_payment_card (id, company_code),
     UNIQUE (payer_payment_card_id, company_code, invoice_type, valid_from)
 );
 CREATE INDEX ON payer_card_payment_policy (payer_id);
@@ -623,13 +672,152 @@ CREATE INDEX ON card_payment_attempt (invoice_id);
 CREATE INDEX ON card_payment_attempt (payer_id);
 CREATE INDEX ON card_payment_attempt (payer_payment_card_id);
 
+-- ACH/SEPA bank debit (ADR-0032) — a PARALLEL structure to
+-- payer_payment_card above, not a generalization of it. Deliberately kept
+-- separate: bank debits have no expiry concept (no card_exp_month/year
+-- equivalent), need method-specific verification/mandate tracking cards
+-- never had, and settle over days rather than instantly — retrofitting
+-- the card tables to cover this would have touched every already-built
+-- card-payment ADR/job in this doc for no real benefit. method_type splits
+-- ACH (US) from SEPA (EU) since their verification and mandate mechanics
+-- differ; sepa_mandate_* columns are SEPA-only (NULL for ACH), same
+-- nullable-when-not-applicable treatment used elsewhere in this doc.
+-- self_imposed_limit_* is a Payer-SELF-DECLARED cap set at registration
+-- time (not a Tenant-configured policy — there is deliberately no
+-- payer_bank_account_payment_policy mirroring payer_card_payment_policy;
+-- this simpler single cap was chosen instead) — the Payer's own stated
+-- reason for it is being able to tell their own bank a hard ceiling on
+-- what AIARAP will ever pull, checked as a hard outer bound before any
+-- charge attempt.
+-- company_code (ADR-0020 update, same reasoning as payer_payment_card's
+-- own company_code retrofit): Stripe Connect moved to per-Company-Code,
+-- so an ACH/SEPA PaymentMethod token is likewise only valid within the
+-- one Company Code's Connected Account it was registered under.
+CREATE TABLE payer_bank_account (
+    id                           UUID PRIMARY KEY DEFAULT uuidv7(),
+    payer_id                     UUID NOT NULL REFERENCES payer(id),
+    company_code                 TEXT NOT NULL REFERENCES company_code(code),
+    method_type                  TEXT NOT NULL CHECK (method_type IN ('ach', 'sepa')),
+    provider                     TEXT NOT NULL DEFAULT 'stripe',
+    provider_customer_ref        TEXT,           -- e.g. Stripe Customer ID (cus_xxx)
+    provider_payment_method_ref  TEXT NOT NULL,  -- e.g. Stripe PaymentMethod ID (pm_xxx) for a us_bank_account or sepa_debit type
+    bank_name                    TEXT,
+    account_last4                TEXT,
+    account_holder_name          TEXT,
+    country                      TEXT,
+    currency                     TEXT REFERENCES currency(code),  -- the account's own currency — USD for ACH, EUR for SEPA in practice, not hardcoded either way
+    verification_method          TEXT CHECK (verification_method IN ('instant', 'microdeposit')),  -- Financial-Connections/Plaid-style instant verification, or the 2-small-deposit fallback when instant isn't available for a given bank
+    verification_status          TEXT NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'failed')),
+    sepa_mandate_reference        TEXT,  -- SEPA only — the signed mandate's own reference/ID; SEPA legally requires this before any debit, unlike ACH
+    sepa_mandate_signed_at        TIMESTAMPTZ,  -- SEPA only
+    self_imposed_limit_amount     NUMERIC(18,2),
+    self_imposed_limit_period     TEXT CHECK (self_imposed_limit_period IN ('per_charge', 'monthly')),  -- 'monthly' is CALENDAR month (resets the 1st), not a rolling window — parking lot item 49, resolved. Evaluated live at each charge attempt: sum this account's own successful (non-returned) bank_debit_payment amounts from the 1st of the current calendar month through now; skip the charge if adding it would exceed self_imposed_limit_amount. No separate tracking table (unlike card_payment_threshold_exceeded) — that exists for FX-conversion complexity this doesn't have; a failed check just logs as a normal bank_debit_payment_attempt (outcome='failed')
+    self_imposed_limit_currency   TEXT REFERENCES currency(code),
+    is_primary                    BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_child_use               BOOLEAN NOT NULL DEFAULT FALSE,  -- can a child Payer (per payer_hierarchy) charge this bank account? Same convention as payer_payment_card.allow_child_use
+    consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0,  -- reset to 0 on any successful bank_debit_payment_attempt; drives auto_pay_blocked, same convention as payer_payment_card
+    auto_pay_blocked              BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_pay_blocked_at           TIMESTAMPTZ,
+    status                        TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    deletion_flag                 BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                    UUID,
+    updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                    UUID,
+    CONSTRAINT payer_bank_account_company_code_fk
+        FOREIGN KEY (payer_id, company_code)
+        REFERENCES payer_company_code (payer_id, company_code),
+    UNIQUE (provider, provider_payment_method_ref)
+);
+CREATE INDEX ON payer_bank_account (payer_id);
+CREATE INDEX ON payer_bank_account (payer_id, company_code);
+-- at most one active primary per Payer PER Company Code, same convention as payer_payment_card
+CREATE UNIQUE INDEX ON payer_bank_account (payer_id, company_code) WHERE is_primary AND status = 'active';
+
+-- Mirrors card_payment, with settlement/return handling cards never
+-- needed: charged_at is when Stripe reported the debit as 'succeeded' —
+-- treated as sufficient to write back to SAP immediately and mark the
+-- Invoice paid (ADR-0032's optimistic-settlement decision), NOT gated on
+-- settlement_status reaching 'settled'. settlement_status tracks the
+-- multi-day bank-side outcome separately, for visibility, not as a gate.
+-- A late 'returned' event doesn't get its own reversal state machine here
+-- — it flips the already-created payment row (linked via
+-- payment.bank_debit_payment_id, mirroring payment.card_payment_id
+-- exactly) to status = 'reversed', reusing invoice.open_amount's existing
+-- derivation (SUM(payment.amount WHERE status='posted') already excludes
+-- reversed rows) rather than inventing new derivation logic for this one
+-- payment method.
+CREATE TABLE bank_debit_payment (
+    id                        UUID PRIMARY KEY DEFAULT uuidv7(),
+    invoice_id                UUID NOT NULL REFERENCES invoice(id),
+    payer_id                  UUID NOT NULL REFERENCES payer(id),
+    payer_bank_account_id     UUID NOT NULL REFERENCES payer_bank_account(id),
+    initiated_via             TEXT NOT NULL DEFAULT 'auto_batch'
+                              CHECK (initiated_via IN ('auto_batch', 'manual_portal')),
+    amount                    NUMERIC(18,2) NOT NULL,
+    currency                  TEXT NOT NULL REFERENCES currency(code),
+    provider                  TEXT NOT NULL DEFAULT 'stripe',
+    provider_charge_ref       TEXT NOT NULL,
+    provider_fee_amount       NUMERIC(18,2),  -- gross/fee/net breakdown, same role as card_payment.provider_fee_amount — this is exactly the fee saving driving ADR-0032 (ACH/SEPA fees are typically flat/small vs. card interchange)
+    charged_at                TIMESTAMPTZ NOT NULL,
+    settlement_status         TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (settlement_status IN ('pending', 'settled', 'returned')),
+    settled_at                TIMESTAMPTZ,
+    returned_at               TIMESTAMPTZ,
+    return_code               TEXT,  -- e.g. ACH return codes (R01 Insufficient Funds, R02 Account Closed, R10 Unauthorized) or SEPA reason codes (AC04, AM04, MD01)
+    return_reason              TEXT,
+    sap_posting_status        TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (sap_posting_status IN ('pending', 'posted', 'failed')),
+    sap_posting_reference     TEXT,
+    sap_posting_attempts      INTEGER NOT NULL DEFAULT 0,
+    sap_posting_last_error    TEXT,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                UUID,
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                UUID,
+    UNIQUE (provider, provider_charge_ref)
+);
+CREATE INDEX ON bank_debit_payment (invoice_id);
+CREATE INDEX ON bank_debit_payment (payer_id);
+CREATE INDEX ON bank_debit_payment (payer_bank_account_id);
+CREATE INDEX ON bank_debit_payment (sap_posting_status);  -- drives the SAP write-back retry sweep
+-- drives the sweep watching for late return events / settlement confirmation
+CREATE INDEX ON bank_debit_payment (settlement_status) WHERE settlement_status = 'pending';
+
+-- Mirrors card_payment_attempt exactly, minus a policy_id — there is no
+-- payer_bank_account_payment_policy to authorize against (see
+-- payer_bank_account's self_imposed_limit_* comment above for why).
+CREATE TABLE bank_debit_payment_attempt (
+    id                      UUID PRIMARY KEY DEFAULT uuidv7(),
+    invoice_id              UUID NOT NULL REFERENCES invoice(id),
+    payer_id                UUID NOT NULL REFERENCES payer(id),
+    payer_bank_account_id   UUID NOT NULL REFERENCES payer_bank_account(id),
+    initiated_via           TEXT NOT NULL DEFAULT 'auto_batch'
+                            CHECK (initiated_via IN ('auto_batch', 'manual_portal')),
+    attempted_amount        NUMERIC(18,2) NOT NULL,
+    attempted_currency      TEXT NOT NULL REFERENCES currency(code),
+    provider                TEXT NOT NULL DEFAULT 'stripe',
+    provider_request_ref    TEXT,
+    outcome                 TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed')),
+    failure_code            TEXT,
+    failure_message         TEXT,
+    bank_debit_payment_id   UUID REFERENCES bank_debit_payment(id),  -- set when outcome = 'succeeded'
+    attempted_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by              UUID
+);
+CREATE INDEX ON bank_debit_payment_attempt (invoice_id);
+CREATE INDEX ON bank_debit_payment_attempt (payer_id);
+CREATE INDEX ON bank_debit_payment_attempt (payer_bank_account_id);
+
 -- Log of every incoming Payment Provider webhook event (ADR-0020), named
 -- generically per ADR-0001 rather than Stripe-specific — not scoped to
 -- card-data updates only, so any future webhook-driven event (e.g. charge
 -- confirmation) reuses the same table rather than forking a new one.
 -- By the time an event reaches this table, the webhook receiver has
 -- already resolved which {tenant} schema to write into via
--- global.tenant_registry.stripe_connected_account_id — this table only
+-- global.stripe_account_routing (ADR-0032 update — replaced the old
+-- single-column pointer on global.tenant_registry) — this table only
 -- exists inside that resolved schema. UNIQUE(provider, provider_event_id)
 -- gives idempotency: Stripe can (and does) redeliver the same event more
 -- than once, and a redelivery within the same Tenant must not reprocess.
@@ -652,12 +840,199 @@ CREATE TABLE payment_provider_webhook_event (
 );
 CREATE INDEX ON payment_provider_webhook_event (status);  -- drives any reprocessing sweep of 'failed'/'pending' rows
 
+-- SAP T001-equivalent (Company Code master data). Promoted from plain TEXT
+-- to a real reference table for the same reason invoice_type was further
+-- down this file: it now needs to carry real config, not just act as a
+-- label. down_payment_configured tracks whether this Company Code's SAP
+-- has FI Down Payment (special G/L indicator + alternative reconciliation
+-- account) correctly set up — checked at Sales Order checkout time (ADR-
+-- 0029) before AIARAP will let a Payer complete checkout under this
+-- Company Code. Deliberately Company-Code-grained, not a single Tenant-
+-- wide flag: this SAP config is maintained per Company Code, so a Tenant
+-- with multiple Company Codes (e.g. a later-onboarded subsidiary) can
+-- easily have it configured correctly in one and not another.
+-- down_payment_verified_at/_by is a manual confirmation step, not a
+-- self-service toggle — same treatment as stripe_enabled below only being
+-- flipped once Stripe Connect onboarding is actually confirmed, not
+-- automatically. Extracted per Tenant like invoice_type (a Tenant's
+-- own Company Code structure, not fixed/seeded reference data like
+-- currency).
+-- minimum_{card,ach,sepa}_payment_amount/_currency (ADR-0032 update) were
+-- originally proposed on tenant_settings (one flat platform-wide number),
+-- moved here instead — same Company-Code-grained reasoning as
+-- down_payment_configured: a Tenant with multiple Company Codes may want
+-- different minimum-payment thresholds per one, not a single Tenant-wide
+-- setting.
+-- stripe_* fields (ADR-0020 update) were also originally on
+-- tenant_settings (one Stripe Connected Account per Tenant) — moved here
+-- because a Stripe Connect Standard account is a genuinely separate
+-- underlying Stripe account, and a Tenant with multiple Company Codes
+-- (separate legal entities/bank accounts) needs each one to settle
+-- payouts into its own bank account via its own Connected Account, not a
+-- single Tenant-wide one. This is a real reopening of ADR-0020's "one
+-- connected account per Tenant" premise — see that ADR's own update note.
+-- stripe_connected_account_id no longer has a single-column routing
+-- pointer on global.tenant_registry (a Tenant can now own several) — see
+-- global.stripe_account_routing below, a proper lookup table replacing it.
+-- bank_debit_order_confirmation_mode (ADR-0032 update) governs Sales
+-- Order checkout (ADR-0029) specifically for payment_method IN
+-- ('ach', 'sepa') — since ADR-0032's optimistic-settlement decision means
+-- a Sales Order could otherwise be created (and fulfillment begun) in SAP
+-- on a charge that isn't actually final for days, a Tenant can choose per
+-- Company Code: 'hold_in_aiarap' (don't call SAP to create the order at
+-- all until sales_order_payment.settlement_status reaches 'settled' —
+-- the charge itself still happens immediately, only SAP order creation
+-- waits) or 'submit_with_delivery_block' (create the SAP Sales Order
+-- immediately as before, but with SAP's own Delivery Block — VBAK-LIFSK
+-- — set, cleared only once settlement is confirmed). Does not apply to
+-- 'credit_card' orders (no equivalent settlement delay) or
+-- 'purchase_order' orders (never charged at checkout). See the new Sales
+-- Order Bank-Debit Confirmation Batch job (0002-scheduled-jobs.md) that
+-- acts on whichever mode applies.
+CREATE TABLE company_code (
+    code                             TEXT PRIMARY KEY,  -- SAP BUKRS
+    name                             TEXT NOT NULL,
+    down_payment_configured          BOOLEAN NOT NULL DEFAULT FALSE,
+    down_payment_verified_at         TIMESTAMPTZ,
+    down_payment_verified_by      UUID,
+    minimum_card_payment_amount   NUMERIC(14,3) NOT NULL DEFAULT 0,  -- ADR-0032: moved here from tenant_settings, same Company-Code grain as down_payment_configured above — a Tenant with multiple Company Codes may want different minimums per one, not one flat platform-wide number. Scale 3 for 3-decimal currencies (BHD/KWD/OMR); decimal-place validation against currency.minor_unit happens at the application layer, same as everywhere else in this doc. Rationale is card processing fee economics (spec story 12).
+    minimum_card_payment_currency  TEXT NOT NULL DEFAULT 'USD' REFERENCES currency(code),
+    minimum_ach_payment_amount     NUMERIC(14,3) NOT NULL DEFAULT 0,  -- independently tunable from the card minimum — ACH's fee economics differ
+    minimum_ach_payment_currency   TEXT NOT NULL DEFAULT 'USD' REFERENCES currency(code),
+    minimum_sepa_payment_amount    NUMERIC(14,3) NOT NULL DEFAULT 0,  -- kept separate from the ACH minimum — different region, different fee structure
+    minimum_sepa_payment_currency  TEXT NOT NULL DEFAULT 'EUR' REFERENCES currency(code),
+    stripe_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,  -- ADR-0020 update: moved from tenant_settings — not every Company Code uses Stripe/card+ACH+SEPA payments; gates the Automatic Card Payment batch, Automatic Bank Debit Payment batch, Card Expiry Alert, and webhook processing for this Company Code
+    stripe_connected_account_id    TEXT UNIQUE,  -- authoritative, app-facing copy; global.stripe_account_routing keeps the routing-only lookup entry, kept in sync at write time
+    stripe_disconnected_at         TIMESTAMPTZ,  -- set when this Company Code disconnects Stripe; stripe_connected_account_id is deliberately NOT cleared — kept as a historical record, same "deactivation not deletion" convention used elsewhere, so any late in-flight webhook for a pre-disconnect charge still resolves correctly rather than being orphaned
+    stripe_payout_interval          TEXT CHECK (stripe_payout_interval IN ('daily', 'weekly', 'monthly', 'manual')),  -- synced from Stripe's Account API (settings.payouts.schedule), not manually configured — refreshed by the Stripe Payout Reconciliation job (ADR-0025) each run
+    stripe_payout_delay_days        INTEGER,  -- synced alongside stripe_payout_interval; drives the reconciliation grace-period window (parking lot item 23) — NULL until first synced, in which case the job falls back to the 5-day platform default
+    bank_debit_order_confirmation_mode  TEXT NOT NULL DEFAULT 'submit_with_delivery_block'
+                                        CHECK (bank_debit_order_confirmation_mode IN ('hold_in_aiarap', 'submit_with_delivery_block')),
+    created_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                    UUID,
+    updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                    UUID
+);
+
+-- SAP TVKO-equivalent (Sales Organizations). Extracted per Tenant like
+-- company_code above — a Tenant's own SD org structure, not fixed/seeded
+-- reference data.
+CREATE TABLE sales_org (
+    code          TEXT PRIMARY KEY,  -- SAP VKORG
+    name          TEXT NOT NULL,
+    company_code  TEXT NOT NULL REFERENCES company_code(code),  -- SAP TVKO-BUKRS: a Sales Org belongs to exactly one Company Code
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by    UUID,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by    UUID
+);
+CREATE INDEX ON sales_org (company_code);
+
+-- SAP T001W-equivalent (Plants/Branches). Extracted per Tenant. Kept
+-- standalone (no direct company_code column) — its Company Code
+-- relationship goes through company_code_plant below, since real SAP
+-- plant-to-company-code assignment is indirect (via Valuation Area), not a
+-- plain 1:1 column.
+CREATE TABLE plant (
+    code            TEXT PRIMARY KEY,  -- SAP WERKS
+    name            TEXT NOT NULL,
+    address_line1   TEXT,
+    address_line2   TEXT,
+    city            TEXT,
+    state_province   TEXT,
+    postal_code      TEXT,
+    country          TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by       UUID,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by       UUID
+);
+
+-- SAP T024E-equivalent (Purchasing Organizations). AP-domain master data —
+-- deliberately kept a bare master table for now (Vendor/AP DDL remains
+-- deferred per the AR-before-AP sequencing, parking lot item 11;
+-- vendor_purchasing_org is not retrofitted to reference this yet), but its
+-- two assignment tables below are built alongside it now per this
+-- session's request rather than waiting for the full AP domain review
+-- pass.
+CREATE TABLE purchase_org (
+    code        TEXT PRIMARY KEY,  -- SAP EKORG
+    name        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID
+);
+
+-- SAP's "Assign Purchasing Organization to Company Code" config (a
+-- Purchasing Org configured as company-code-specific, usable across every
+-- Plant belonging to that Company Code). Not mutually exclusive with
+-- purchase_org_plant below — a real SAP Purchasing Org can be assigned
+-- either way, or both (a "reference"/shared Purchasing Org spanning
+-- multiple Company Codes is a further real-world variant, not modeled here
+-- — out of scope until an actual Tenant needs it).
+CREATE TABLE purchase_org_company_code (
+    purchase_org  TEXT NOT NULL REFERENCES purchase_org(code),
+    company_code  TEXT NOT NULL REFERENCES company_code(code),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by    UUID,
+    PRIMARY KEY (purchase_org, company_code)
+);
+CREATE INDEX ON purchase_org_company_code (company_code);
+
+-- SAP's "Assign Purchasing Organization to Plant" config (plant-specific
+-- Purchasing Org, potentially spanning multiple Company Codes).
+CREATE TABLE purchase_org_plant (
+    purchase_org  TEXT NOT NULL REFERENCES purchase_org(code),
+    plant         TEXT NOT NULL REFERENCES plant(code),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by    UUID,
+    PRIMARY KEY (purchase_org, plant)
+);
+CREATE INDEX ON purchase_org_plant (plant);
+
+-- SAP T001K-equivalent (Valuation Area assigned to Company Code),
+-- simplified to Plant directly (Valuation Area = Plant in the common,
+-- non-split-valuation case — a genuine 1:many Valuation-Area-to-Plant
+-- split is a further real-world variant not modeled here).
+CREATE TABLE company_code_plant (
+    company_code  TEXT NOT NULL REFERENCES company_code(code),
+    plant         TEXT NOT NULL REFERENCES plant(code),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by    UUID,
+    PRIMARY KEY (company_code, plant)
+);
+CREATE INDEX ON company_code_plant (plant);
+
+-- SAP TVKWZ-equivalent ("Assign plant for sales org/distribution
+-- channel") — the real, 3-part grain: the same Sales Org can deliver from
+-- different Plants depending on Distribution Channel, so a flat
+-- Sales-Org-to-Plant mapping (2-part) would be insufficient.
+-- distribution_channel stays plain TEXT here, consistent with its
+-- treatment everywhere else in this doc (payer_sales_area, invoice) — only
+-- sales_org and plant have been promoted to real reference tables this
+-- session, not distribution_channel/division.
+CREATE TABLE sales_org_distribution_channel_plant (
+    sales_org             TEXT NOT NULL REFERENCES sales_org(code),
+    distribution_channel  TEXT NOT NULL,
+    plant                 TEXT NOT NULL REFERENCES plant(code),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by            UUID,
+    PRIMARY KEY (sales_org, distribution_channel, plant)
+);
+CREATE INDEX ON sales_org_distribution_channel_plant (plant);
+
 -- SAP KNVV-equivalent (Sales Area Data), kept minimal: a Payer can have
 -- different sales terms per Sales Org + Distribution Channel + Division.
+-- sales_org and shipping_plant now carry real FKs (retrofitted alongside
+-- sales_org/plant's creation, ADR-0029), same "promote once a real
+-- reference table exists" treatment as company_code above.
+-- distribution_channel/division stay plain TEXT — not promoted this
+-- session.
 CREATE TABLE payer_sales_area (
     id                          UUID PRIMARY KEY DEFAULT uuidv7(),
     payer_id                    UUID NOT NULL REFERENCES payer(id),
-    sales_org                   TEXT NOT NULL,
+    sales_org                   TEXT NOT NULL REFERENCES sales_org(code),
     distribution_channel        TEXT NOT NULL,
     division                    TEXT NOT NULL,
     currency                    TEXT REFERENCES currency(code),
@@ -666,7 +1041,7 @@ CREATE TABLE payer_sales_area (
     incoterms_1                 TEXT,  -- Incoterms classification, e.g. 'FOB', 'CIF'
     incoterms_2                 TEXT,  -- named place/location qualifying incoterms_1, e.g. 'Mumbai Port'
     customer_group              TEXT,
-    shipping_plant              TEXT,  -- delivering plant
+    shipping_plant              TEXT REFERENCES plant(code),  -- delivering plant
     shipping_conditions         TEXT,
     order_combination_allowed   BOOLEAN NOT NULL DEFAULT FALSE,  -- whether multiple orders can be combined into one delivery
     billing_block               BOOLEAN NOT NULL DEFAULT FALSE,  -- SAP KNVV-FAKSD-equivalent: blocks invoicing for this Sales Org/Distribution Channel/Division only, distinct from payer_company_code.credit_hold
@@ -679,13 +1054,17 @@ CREATE TABLE payer_sales_area (
     UNIQUE (payer_id, sales_org, distribution_channel, division)
 );
 CREATE INDEX ON payer_sales_area (payer_id);
+CREATE INDEX ON payer_sales_area (sales_org);
+CREATE INDEX ON payer_sales_area (shipping_plant);
 
 -- SAP KNB1-equivalent (Company Code Data), kept minimal: a Payer can have
--- different accounting terms per Company Code.
+-- different accounting terms per Company Code. company_code now carries a
+-- real FK to the company_code table above (retrofitted alongside its
+-- creation, ADR-0029) rather than staying plain TEXT.
 CREATE TABLE payer_company_code (
     id                         UUID PRIMARY KEY DEFAULT uuidv7(),
     payer_id                   UUID NOT NULL REFERENCES payer(id),
-    company_code               TEXT NOT NULL,
+    company_code               TEXT NOT NULL REFERENCES company_code(code),
     reconciliation_gl_account  TEXT,
     payment_terms              TEXT,
     accounting_clerk_user_id   UUID REFERENCES app_user(id),  -- SAP KNB1-BUSAB-equivalent, but a real AIARAP account (not a code string) so it's an actual notification target — resolves "AR Clerk" for ADR-0019's SAP write-back failure alert, avoids inundating a single Tenant Admin
@@ -694,6 +1073,9 @@ CREATE TABLE payer_company_code (
     credit_limit               NUMERIC(18,2),  -- SAP FD32/KNKK-equivalent, scoped to this company code
     credit_hold                BOOLEAN NOT NULL DEFAULT FALSE,  -- AR-side counterpart to vendor_company_code.payment_block
     credit_hold_reason         TEXT,
+    po_order_allowed           BOOLEAN NOT NULL DEFAULT FALSE,  -- gates sales_order.payment_method = 'purchase_order' (ADR-0029 update) — bill-on-account/net-terms checkout is only offered to approved customers, checked at the application layer against this flag; net terms themselves reuse payment_terms above, no separate field needed
+    po_order_approved_at       TIMESTAMPTZ,  -- manual approval step, not self-service — same treatment as company_code.down_payment_verified_at
+    po_order_approved_by       UUID REFERENCES app_user(id),
     deletion_flag              BOOLEAN NOT NULL DEFAULT FALSE,  -- SAP LOEVM-equivalent, scoped to this company code only
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by                 UUID,
@@ -921,15 +1303,21 @@ CREATE TABLE invoice_type (
 -- nullable — not every Invoice necessarily has SD/sales-area context (a
 -- pure FI-originated invoice might not) — a nullable composite FK simply
 -- isn't checked when any column in it is NULL. invoice_type, unlike
--- company_code/sales area, references the new invoice_type table above
--- rather than staying plain TEXT, now that it's extracted per Tenant.
+-- sales area, references the new invoice_type table above rather than
+-- staying plain TEXT, now that it's extracted per Tenant. company_code
+-- additionally carries a plain (non-composite) FK into the company_code
+-- table itself, alongside its existing composite FK into
+-- payer_company_code below — retrofitted alongside company_code's
+-- creation (ADR-0029), same treatment given to
+-- payer_company_code.company_code and
+-- payer_card_payment_policy.company_code.
 CREATE TABLE invoice (
     id                      UUID PRIMARY KEY DEFAULT uuidv7(),
     sap_invoice_id          TEXT,
     salesforce_invoice_id   TEXT,
     payer_id                UUID NOT NULL REFERENCES payer(id),
-    company_code            TEXT NOT NULL,
-    sales_org               TEXT,
+    company_code            TEXT NOT NULL REFERENCES company_code(code),
+    sales_org               TEXT REFERENCES sales_org(code),  -- nullable, same as the composite FK below — a pure FI-originated invoice may carry no sales-area context at all
     distribution_channel    TEXT,
     division                TEXT,
     invoice_type            TEXT NOT NULL REFERENCES invoice_type(code),
@@ -965,6 +1353,7 @@ CREATE UNIQUE INDEX ON invoice (salesforce_invoice_id) WHERE salesforce_invoice_
 CREATE INDEX ON invoice (payer_id);
 CREATE INDEX ON invoice (payer_id, company_code);
 CREATE INDEX ON invoice (payer_id, sales_org, distribution_channel, division);
+CREATE INDEX ON invoice (sales_org);
 CREATE INDEX ON invoice (invoice_type);
 CREATE INDEX ON invoice (invoice_number);  -- drives guest lookup (Invoice No + Customer No + Amount)
 CREATE INDEX ON invoice (status);
@@ -1059,7 +1448,7 @@ CREATE TABLE payment (
     related_invoice_id          UUID REFERENCES invoice(id),  -- set for 'reallocated' (points at the new residual invoice) and 'credit_issued' (points at the other side's invoice/credit memo); NULL for plain cash and write-offs
     payer_id                    UUID NOT NULL REFERENCES payer(id),
     source                      TEXT NOT NULL CHECK (source IN ('aiarap', 'sap_native')),
-    payment_method              TEXT NOT NULL,  -- raw/descriptive: 'credit_card' for aiarap (only method in Phase 1); mirrors SAP's payment method code (ZLSCH) for sap_native, e.g. bank transfer/check/cash; not used for dashboard grouping, see settlement_category
+    payment_method              TEXT NOT NULL,  -- raw/descriptive: 'credit_card', 'ach', or 'sepa' for aiarap (ADR-0032 added the latter two); mirrors SAP's payment method code (ZLSCH) for sap_native, e.g. bank transfer/check/cash; not used for dashboard grouping, see settlement_category
     settlement_category         TEXT NOT NULL
                                 CHECK (settlement_category IN ('incoming_cash', 'credit_issued', 'bad_debt_writeoff', 'reallocated')),
     amount                      NUMERIC(18,2) NOT NULL,
@@ -1078,6 +1467,8 @@ CREATE TABLE payment (
     vbeln2                      TEXT,  -- SAP BSEG-VBEL2 (Sales Document — secondary/down-payment reference)
     posn2                       TEXT,  -- SAP BSEG-POSN2 (Item of Sales Order, corresponding to vbeln2)
     card_payment_id             UUID REFERENCES card_payment(id),  -- set only when source = 'aiarap' and the method is a card; NULL for sap_native and any future non-card aiarap method
+    sales_order_payment_id      UUID REFERENCES sales_order_payment(id),  -- forward reference — sales_order_payment is defined later in this doc (Sales Order Checkout domain, ADR-0029), same forward-reference treatment already used elsewhere (e.g. invoice_type). Set only when this row was created by AIARAP driving the FI Down Payment clearing (see sales_order_payment below) against the Invoice this Sales Order eventually generated; NULL for every other payment row, including card_payment-sourced ones. vbeln2/posn2 above (SAP BSEG-VBEL2/POSN2, already documented as a "secondary/down-payment reference") may additionally carry the raw SAP-side down payment reference as BSEG mirror data — this column is the actual AIARAP-side applicative link, same role card_payment_id already plays for card charges.
+    bank_debit_payment_id       UUID REFERENCES bank_debit_payment(id),  -- set only when source = 'aiarap' and the method is ACH/SEPA (ADR-0032); NULL otherwise. A late bank-side return flips THIS row's own status to 'reversed' — found via WHERE bank_debit_payment_id = :id — same reversal mechanism the doc's existing status CHECK already supports, no new derivation logic needed.
     status                      TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted', 'reversed')),
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by                  UUID,
@@ -1088,6 +1479,8 @@ CREATE INDEX ON payment (invoice_id);
 CREATE INDEX ON payment (related_invoice_id);
 CREATE INDEX ON payment (payer_id);
 CREATE INDEX ON payment (card_payment_id);
+CREATE INDEX ON payment (sales_order_payment_id);
+CREATE INDEX ON payment (bank_debit_payment_id);
 CREATE INDEX ON payment (source);
 CREATE INDEX ON payment (settlement_category);
 -- Idempotent sync matching: a sync pass discovering SAP-native clearing
@@ -1232,16 +1625,28 @@ CREATE INDEX ON ar_reconciliation_run (trigger_type);
 -- direct query, not an absence-based inference. currency is part of the
 -- grain, not a column alongside a currency-agnostic total — see note
 -- above.
+-- pending_down_payment_amount (parking lot item 39, resolved): a
+-- FI Down Payment (sales_order_payment, ADR-0029) posts against a
+-- different reconciliation account (Advances from Customers, not Trade
+-- Receivables) and isn't a normal open-AR item until cleared — so it's
+-- surfaced here as ADDITIVE VISIBILITY only, never summed into
+-- variance_amount, which stays purely about matching SAP Trade
+-- Receivables against invoice.open_amount. A Payer checking their AIARAP
+-- balance should see the true full picture — open Invoices AND any
+-- pending Down Payment not yet applied — as two clearly separate numbers,
+-- same "don't sum what genuinely can't be summed" discipline already
+-- applied to cross-currency amounts in this domain.
 CREATE TABLE ar_reconciliation_account (
-    id                   UUID PRIMARY KEY DEFAULT uuidv7(),
-    run_id               UUID NOT NULL REFERENCES ar_reconciliation_run(id),
-    payer_id             UUID NOT NULL REFERENCES payer(id),
-    company_code         TEXT NOT NULL,
-    currency             TEXT NOT NULL REFERENCES currency(code),
-    sap_open_amount      NUMERIC(18,2) NOT NULL,
-    aiarap_open_amount   NUMERIC(18,2) NOT NULL,
-    variance_amount      NUMERIC(18,2) NOT NULL,  -- sap_open_amount - aiarap_open_amount; 0 = clean
-    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    id                           UUID PRIMARY KEY DEFAULT uuidv7(),
+    run_id                       UUID NOT NULL REFERENCES ar_reconciliation_run(id),
+    payer_id                     UUID NOT NULL REFERENCES payer(id),
+    company_code                 TEXT NOT NULL,
+    currency                     TEXT NOT NULL REFERENCES currency(code),
+    sap_open_amount              NUMERIC(18,2) NOT NULL,
+    aiarap_open_amount           NUMERIC(18,2) NOT NULL,
+    variance_amount              NUMERIC(18,2) NOT NULL,  -- sap_open_amount - aiarap_open_amount; 0 = clean
+    pending_down_payment_amount  NUMERIC(18,2) NOT NULL DEFAULT 0,  -- SUM(sales_order_payment.amount WHERE clearing_status <> 'cleared') for this Payer/Company Code/currency, as of this run
+    created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by           UUID,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by           UUID,
@@ -1394,41 +1799,106 @@ CREATE UNIQUE INDEX ON ar_aging_snapshot_bucket (snapshot_run_id, payer_id, comp
     WHERE bucket_id IS NOT NULL;
 CREATE UNIQUE INDEX ON ar_aging_snapshot_bucket (snapshot_run_id, payer_id, company_code, currency)
     WHERE bucket_id IS NULL;
+
+-- Pending Down Payment summary (parking lot item 39, resolved) — kept
+-- deliberately separate from every aging bucket above, including
+-- "Current" (bucket_id NULL): a Down Payment (sales_order_payment not yet
+-- cleared, ADR-0029) isn't an aged receivable at all, it's a credit
+-- already collected and awaiting application to a future Invoice.
+-- Blending it into any bucket would misrepresent it as something owed
+-- rather than something already paid. Same "one row per Payer/Company
+-- Code/currency per run" grain as ar_aging_snapshot_bucket, so the
+-- dashboard shows it as a clearly separate summary line — a Payer
+-- checking their AIARAP balance sees the true full picture, not just
+-- open Invoices.
+CREATE TABLE ar_aging_snapshot_down_payment (
+    id                UUID PRIMARY KEY DEFAULT uuidv7(),
+    snapshot_run_id   UUID NOT NULL REFERENCES ar_aging_snapshot_run(id),
+    payer_id          UUID NOT NULL REFERENCES payer(id),
+    company_code      TEXT NOT NULL,
+    currency          TEXT NOT NULL REFERENCES currency(code),
+    pending_amount    NUMERIC(18,2) NOT NULL,  -- SUM(sales_order_payment.amount WHERE clearing_status <> 'cleared') as of snapshot_date
+    order_count       INTEGER NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by        UUID,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by        UUID,
+    CONSTRAINT ar_aging_snapshot_down_payment_company_code_fk
+        FOREIGN KEY (payer_id, company_code)
+        REFERENCES payer_company_code (payer_id, company_code),
+    UNIQUE (snapshot_run_id, payer_id, company_code, currency)
+);
+CREATE INDEX ON ar_aging_snapshot_down_payment (payer_id, company_code, currency);
 ```
 
 ### Stripe payout reconciliation (ADR-0025)
 
 ```sql
 -- Tenant-editable mapping from Stripe's raw balance_transaction.type enum
--- (charge, refund, payment, adjustment, application_fee,
--- application_fee_refund, transfer, transfer_reversal, stripe_fee,
--- network_cost, tax_fee, reserve_transaction, reserved_funds, payout,
--- payout_cancel, payout_failure, topup, topup_reversal, and more — Stripe's
--- list is large and still growing) down into a small, fixed set of
--- buckets a Tenant's finance team can actually reason about. Seeded with
--- sensible defaults per Tenant schema (same "seeded, then Tenant-
--- editable" pattern as notification_template) — a Tenant can remap a
--- given Stripe type to a different bucket, but the bucket list itself is
--- fixed (the CHECK constraint on stripe_payout_transaction.bucket below);
--- the whole point is simplification, not letting the confusion just move
--- one level up into Tenant-invented bucket names.
+-- down into a small, fixed set of buckets a Tenant's finance team can
+-- actually reason about. Seeded with sensible defaults (same "seeded,
+-- then Tenant-editable" pattern as notification_template) — a Tenant can
+-- remap a given Stripe type to a different bucket, but the bucket list
+-- itself is fixed (the CHECK constraint on stripe_payout_transaction.bucket
+-- below); the whole point is simplification, not letting the confusion
+-- just move one level up into Tenant-invented bucket names. Full seed
+-- mapping documented in ADR-0025 (parking lot item 29, resolved).
+-- Scoped per Company Code, not flat per Tenant: GL accounts (below) are
+-- genuinely Company-Code-specific in SAP (different legal entities have
+-- different charts of accounts), and this table already lives alongside
+-- everything else that moved to Company-Code grain once Stripe Connect
+-- did (ADR-0020/0032) — same composite-key-over-surrogate-UUID convention
+-- already used for shipping_priority/delivery_block_reason/
+-- billing_block_reason.
+-- debit_gl_account/credit_gl_account are REFERENCE DATA ONLY — which SAP
+-- G/L accounts a Tenant's finance team would use for this bucket's
+-- entries, shown on the reconciliation view for their own manual journal
+-- entry — NOT an automated GL posting mechanism. "Automated GL posting to
+-- SAP" is still explicitly Out of Scope for Phase 1 per the spec; adding
+-- informational GL account fields here doesn't reverse that, since no job
+-- reads these to actually post anything.
+-- debit_posts_to_customer/credit_posts_to_customer: not every entry has a
+-- fixed G/L account on both sides — real double-entry AR posting routes
+-- one side to the transaction's own Customer/Payer reconciliation account
+-- instead (SAP KNB1-AKONT-style), and WHICH side varies by bucket: a
+-- 'charge' credits the Customer (reducing the receivable when payment
+-- arrives), a 'refund' debits the Customer (reinstating it) — a 'fee' or
+-- 'payout' bucket involves no Customer at all, both sides are fixed G/L
+-- accounts. When a side's flag is true, that side's *_gl_account column
+-- is left NULL — there's no fixed account to name, it's "post to whoever
+-- the Customer on this transaction is," resolved at actual posting time
+-- (were that ever built) from the Payer's own reconciliation account, not
+-- a value stored here.
 CREATE TABLE stripe_transaction_type_bucket (
-    id           UUID PRIMARY KEY DEFAULT uuidv7(),
-    stripe_type  TEXT NOT NULL UNIQUE,  -- Stripe's raw balance_transaction.type value
-    bucket       TEXT NOT NULL
-                 CHECK (bucket IN ('charge', 'refund', 'fee', 'reserve', 'payout', 'adjustment', 'transfer', 'other')),
-    description  TEXT,
-    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_by   UUID,
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_by   UUID
+    company_code              TEXT NOT NULL REFERENCES company_code(code),
+    stripe_type                TEXT NOT NULL,  -- Stripe's raw balance_transaction.type value
+    bucket                     TEXT NOT NULL
+                               CHECK (bucket IN ('charge', 'refund', 'fee', 'reserve', 'payout', 'adjustment', 'transfer', 'other')),
+    description                TEXT,
+    debit_gl_account           TEXT,  -- reference only, see comment above; NULL when debit_posts_to_customer is true
+    debit_posts_to_customer    BOOLEAN NOT NULL DEFAULT FALSE,
+    credit_gl_account          TEXT,  -- reference only, see comment above; NULL when credit_posts_to_customer is true
+    credit_posts_to_customer   BOOLEAN NOT NULL DEFAULT FALSE,
+    status                     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                 UUID,
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                 UUID,
+    PRIMARY KEY (company_code, stripe_type),
+    CONSTRAINT stripe_transaction_type_bucket_debit_side_chk
+        CHECK (NOT (debit_posts_to_customer AND debit_gl_account IS NOT NULL)),
+    CONSTRAINT stripe_transaction_type_bucket_credit_side_chk
+        CHECK (NOT (credit_posts_to_customer AND credit_gl_account IS NOT NULL))
 );
 
 -- Stripe Payout header — the daily settlement Stripe pays to the Tenant's
--- bank account via their Connected Account (ADR-0020).
+-- bank account via their Connected Account (ADR-0020). company_code
+-- (ADR-0020/0032 update) — a payout comes from exactly one Company
+-- Code's own Connected Account, since Stripe Connect is one account per
+-- Company Code, not per Tenant.
 CREATE TABLE stripe_payout (
     id                 UUID PRIMARY KEY DEFAULT uuidv7(),
+    company_code       TEXT NOT NULL REFERENCES company_code(code),
     stripe_payout_id   TEXT NOT NULL UNIQUE,  -- Stripe Payout ID (po_xxx)
     arrival_date       DATE NOT NULL,  -- when funds land in the Tenant's bank account
     amount             NUMERIC(18,2) NOT NULL,  -- net payout amount
@@ -1439,6 +1909,7 @@ CREATE TABLE stripe_payout (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by         UUID
 );
+CREATE INDEX ON stripe_payout (company_code);
 CREATE INDEX ON stripe_payout (arrival_date);
 
 -- One row per Balance Transaction within a Payout — Stripe's own
@@ -1457,21 +1928,25 @@ CREATE INDEX ON stripe_payout (arrival_date);
 -- a Tenant's finance team needs to distinguish (FX gain/loss vs. Stripe
 -- fees are accounted for completely differently). All three are NULL when
 -- no conversion occurred (presentment currency already matches the
--- settlement currency). transaction_type carries an FK to
--- stripe_transaction_type_bucket rather than staying unconstrained — if
--- Stripe introduces a new type not yet mapped, extraction fails loudly
--- (a mapping row needs adding) rather than silently landing in an
--- unrecognized/default bucket. bucket is a denormalized snapshot of that
--- mapping AT INGESTION TIME, not a live join — if a Tenant edits the
+-- settlement currency). company_code (ADR-0020/0032 update) is
+-- denormalized from stripe_payout — needed as its own column so
+-- transaction_type's FK below can be a real composite reference into
+-- stripe_transaction_type_bucket, now that table is keyed
+-- (company_code, stripe_type), not just stripe_type alone. If Stripe
+-- introduces a new type not yet mapped for this Company Code, extraction
+-- fails loudly (a mapping row needs adding) rather than silently landing
+-- in an unrecognized/default bucket. bucket is a denormalized snapshot of
+-- that mapping AT INGESTION TIME, not a live join — if a Tenant edits the
 -- mapping later, past transactions keep showing the bucket they were
 -- actually reported under, same "store what was actually true, not a
 -- live-recomputed value" reasoning used for notification.subject/body.
 CREATE TABLE stripe_payout_transaction (
     id                       UUID PRIMARY KEY DEFAULT uuidv7(),
     payout_id                UUID NOT NULL REFERENCES stripe_payout(id),
+    company_code             TEXT NOT NULL REFERENCES company_code(code),
     stripe_balance_txn_id    TEXT NOT NULL UNIQUE,  -- Stripe Balance Transaction ID (txn_xxx)
     stripe_charge_ref        TEXT,  -- Stripe Charge/PaymentIntent ID — the match key against card_payment.provider_charge_ref; NULL for pure fee/adjustment lines with no underlying charge
-    transaction_type         TEXT NOT NULL REFERENCES stripe_transaction_type_bucket (stripe_type),  -- Stripe's raw type, e.g. 'charge', 'network_cost', 'reserve_transaction'
+    transaction_type         TEXT NOT NULL,  -- Stripe's raw type, e.g. 'charge', 'network_cost', 'reserve_transaction'; composite-FKs into stripe_transaction_type_bucket below, scoped by this same company_code
     bucket                   TEXT NOT NULL
                              CHECK (bucket IN ('charge', 'refund', 'fee', 'reserve', 'payout', 'adjustment', 'transfer', 'other')),
     gross_amount             NUMERIC(18,2) NOT NULL,
@@ -1485,9 +1960,13 @@ CREATE TABLE stripe_payout_transaction (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by               UUID,
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_by               UUID
+    updated_by               UUID,
+    CONSTRAINT stripe_payout_transaction_type_fk
+        FOREIGN KEY (company_code, transaction_type)
+        REFERENCES stripe_transaction_type_bucket (company_code, stripe_type)
 );
 CREATE INDEX ON stripe_payout_transaction (payout_id);
+CREATE INDEX ON stripe_payout_transaction (company_code);
 CREATE INDEX ON stripe_payout_transaction (bucket);
 CREATE INDEX ON stripe_payout_transaction (stripe_charge_ref);
 CREATE INDEX ON stripe_payout_transaction (matched_card_payment_id);
@@ -1529,5 +2008,640 @@ CREATE TABLE stripe_reconciliation_discrepancy (
 );
 CREATE INDEX ON stripe_reconciliation_discrepancy (run_id);
 CREATE INDEX ON stripe_reconciliation_discrepancy (card_payment_id);
+```
+
+### Product Catalog (ADR-0029)
+
+Deferred out of Tenancy & Identity (see that domain's naming/pattern notes) into Core AR/AP, since Product is a catalog/transactional entity, not an identity/tenancy one. Now that Sales Order pricing/tax is resolved entirely by a live SAP call at checkout (ADR-0029) rather than anything computed or stored locally, Product's own job is narrower than a full Material Master mirror: enough identifying data to build that live SAP request (a real Material Number, always) plus catalog display data (description, images, UOM).
+
+```sql
+-- SAP MARA/MAKT-equivalent (Material General Data + basic Description).
+-- SAP-only sourcing (sap_material_id NOT NULL), unlike Payer/Invoice's
+-- dual-source treatment — every product must tie back to a real SAP
+-- Material Master, since ADR-0029's checkout flow calls SAP to create a
+-- real Sales Order against it, which requires a real Material Number.
+-- Only the DISPLAY layer (description_override, images below) can be
+-- Tenant-supplied on top of the SAP-sourced record — there is no
+-- fully-manual, no-SAP-tie product for Phase 1 (that option was
+-- considered and rejected: see this session's discussion).
+-- division is a MARA-level attribute (SAP SPART) — one Division per
+-- Material — deliberately NOT part of product_sales_org's key below,
+-- unlike payer_sales_area's 3-part Sales Area key. This mirrors real SAP:
+-- MVKE (Material Sales Data) is keyed by Sales Org + Distribution Channel
+-- only; Division lives on MARA, not on the sales-org-specific table.
+CREATE TABLE product (
+    id                    UUID PRIMARY KEY DEFAULT uuidv7(),
+    sap_material_id       TEXT NOT NULL UNIQUE,  -- SAP MARA-MATNR
+    description           TEXT NOT NULL,          -- SAP MAKT-MAKTX (base/SAP short text)
+    description_override  TEXT,                   -- Tenant-editable portal-friendly text; NULL = display `description` as-is
+    base_uom              TEXT NOT NULL,           -- SAP MARA-MEINS; plain TEXT, consistent with invoice_line.uom elsewhere in this doc
+    material_type         TEXT,                    -- SAP MARA-MTART
+    material_group        TEXT,                    -- SAP MARA-MATKL, useful for catalog categorization/filtering
+    division              TEXT,                    -- SAP MARA-SPART
+    ean_upc               TEXT,                    -- SAP MARA-EAN11
+    status                TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    deletion_flag         BOOLEAN NOT NULL DEFAULT FALSE,  -- SAP LOEVM-equivalent (MARA-LVORM)
+    custom_fields         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by            UUID,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by            UUID
+);
+
+-- SAP MVKE-equivalent (Material Sales Data), keyed by Sales Org +
+-- Distribution Channel only (real MVKE grain — no Division component,
+-- see product's division column above). Drives catalog listing per Payer's
+-- own Sales Area (this session's decision: catalog is Sales-Org-scoped,
+-- not global) — a Payer only sees products with a row here matching their
+-- own payer_sales_area (sales_org, distribution_channel), not blocked.
+-- delivering_plant mirrors MVKE-DWERK; the assignment itself is validated
+-- against sales_org_distribution_channel_plant (TVKWZ-equivalent) at the
+-- application layer, not a DB-level composite FK, since that table's key
+-- includes distribution_channel as plain TEXT (not promoted to a real
+-- reference table this session) the same way this one does.
+-- list_price/list_price_currency/list_price_extracted_at: an INDICATIVE
+-- price for catalog browsing only, extracted periodically (new List Price
+-- Extraction job, 0002-scheduled-jobs.md) from SAP condition records —
+-- same "extracted per Tenant, not live-called" pattern as Currency
+-- Exchange Rate/Invoice Type Extraction. This is deliberately NOT the
+-- authoritative price: pricing itself is never computed or stored ahead
+-- of time for real (ADR-0029) — the real price a Payer actually pays
+-- always comes from the live BAPI_SALESORDER_SIMULATE call once a
+-- product is added to a cart and simulated, and can legitimately differ
+-- (scale discounts, promotions, tax). This is the general, Sales-Area-
+-- level price; product_payer_price below is a more specific
+-- Customer-level override, checked first when it exists.
+-- No scale/quantity-break pricing modeled here — deliberately kept to one
+-- flat number, not the RFQ domain's scale-pricing child-table pattern
+-- (RFQ response line + price-break tiers). Any quantity-based break SAP
+-- itself would apply is invisible to this flat indicative price and only
+-- shows up once the live simulation actually runs against the cart's real
+-- quantity — same as scale discounts generally, per the note above.
+CREATE TABLE product_sales_org (
+    id                       UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id               UUID NOT NULL REFERENCES product(id),
+    sales_org                TEXT NOT NULL REFERENCES sales_org(code),
+    distribution_channel     TEXT NOT NULL,
+    delivering_plant         TEXT REFERENCES plant(code),  -- SAP MVKE-DWERK
+    sales_unit               TEXT,  -- SAP MVKE-VRKME; NULL = defaults to product.base_uom
+    list_price               NUMERIC(18,4),
+    list_price_currency      TEXT REFERENCES currency(code),
+    list_price_extracted_at  TIMESTAMPTZ,
+    blocked                  BOOLEAN NOT NULL DEFAULT FALSE,  -- simplified from SAP's richer Sales Status code set (unrestricted/phase-out/blocked) to a boolean + reason, same simplification already applied to payer_sales_area.billing_block
+    blocked_reason           TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by               UUID,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by               UUID,
+    UNIQUE (product_id, sales_org, distribution_channel)
+);
+CREATE INDEX ON product_sales_org (product_id);
+CREATE INDEX ON product_sales_org (sales_org, distribution_channel);  -- drives the Sales-Org-scoped catalog listing query
+CREATE INDEX ON product_sales_org (delivering_plant);
+
+-- Customer-specific list price override (SAP Customer-Material Info
+-- Record/customer-specific condition record-equivalent) — more specific
+-- than product_sales_org.list_price above, checked FIRST when a row
+-- exists for this Payer, falling back to the Sales-Area-level price
+-- otherwise. Same "extracted periodically, indicative only" treatment —
+-- the real, final price is still always the live simulation call at
+-- cart/checkout time, regardless of which indicative price was shown
+-- while browsing. Scoped by the same (sales_org, distribution_channel)
+-- as product_sales_org, since SAP pricing is generally Sales-Area-
+-- dependent even at the customer-specific level — composite-FK'd into
+-- product_sales_org to ensure a payer-specific price can't exist for a
+-- Sales Area the product isn't even listed in.
+CREATE TABLE product_payer_price (
+    id                       UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id               UUID NOT NULL REFERENCES product(id),
+    payer_id                 UUID NOT NULL REFERENCES payer(id),
+    sales_org                TEXT NOT NULL REFERENCES sales_org(code),
+    distribution_channel     TEXT NOT NULL,
+    list_price               NUMERIC(18,4) NOT NULL,
+    list_price_currency      TEXT NOT NULL REFERENCES currency(code),
+    list_price_extracted_at  TIMESTAMPTZ NOT NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by               UUID,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by               UUID,
+    UNIQUE (product_id, payer_id, sales_org, distribution_channel),
+    CONSTRAINT product_payer_price_product_sales_org_fk
+        FOREIGN KEY (product_id, sales_org, distribution_channel)
+        REFERENCES product_sales_org (product_id, sales_org, distribution_channel)
+);
+CREATE INDEX ON product_payer_price (product_id, payer_id);
+CREATE INDEX ON product_payer_price (payer_id);
+
+-- SAP MARM-equivalent (Units of Measure for Material) — the alternative
+-- UOMs a product can be ordered in beyond its base_uom, with the
+-- conversion factor back to base_uom. product.base_uom itself is always
+-- implicitly a valid order unit (1:1, matching real SAP: MARM only stores
+-- ALTERNATIVE units, never the base unit as a row against itself) — this
+-- table exists purely to let the Sales Order checkout flow (ADR-0029)
+-- offer a UOM picker (e.g. order by EA or by BOX) rather than forcing
+-- every order line into the base unit. numerator/denominator mirrors SAP
+-- MARM-UMREZ/UMREN: 1 uom = (numerator / denominator) base_uom — e.g. a
+-- BOX with numerator=12, denominator=1 means 1 BOX = 12 EA. ean_upc here
+-- is per-UOM (SAP MARM-EAN11, e.g. a distinct barcode per packaging
+-- level), more granular than product.ean_upc, which stays the base
+-- unit's own EAN (SAP MARA-EAN11) — both are real, independently-
+-- maintained SAP fields, not a duplicate of the same data. The actual
+-- order-line quantity/UOM sent to SAP at checkout is still validated and
+-- converted by SAP itself at Sales Order posting time (SAP is the
+-- authority on MARM, this table is a local catalog-display copy) — this
+-- table only needs to be accurate enough to populate the picker and any
+-- local quantity/price display math.
+CREATE TABLE product_uom (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id     UUID NOT NULL REFERENCES product(id),
+    uom            TEXT NOT NULL,            -- SAP MARM-MEINH
+    numerator      NUMERIC(13,3) NOT NULL,   -- SAP MARM-UMREZ
+    denominator    NUMERIC(13,3) NOT NULL,   -- SAP MARM-UMREN
+    ean_upc        TEXT,                     -- SAP MARM-EAN11, specific to this UOM
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by     UUID,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by     UUID,
+    UNIQUE (product_id, uom)
+);
+CREATE INDEX ON product_uom (product_id);
+
+-- Tenant-uploaded product images ONLY. SAP-sourced images/drawings (when a
+-- Tenant maintains them in SAP DMS) are fetched LIVE at display time via
+-- the SAP DMS integration, keyed off product.sap_material_id — same
+-- on-demand-not-cached treatment as Invoice PDF (spec: "fetched live/
+-- on-demand from SAP for both preview and download — not pre-cached at
+-- extraction time"). There is nothing to persist for that case, so this
+-- table has no source/discriminator column — every row here is a Tenant
+-- upload, full stop.
+CREATE TABLE product_image (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    product_id     UUID NOT NULL REFERENCES product(id),
+    storage_key    TEXT NOT NULL,  -- e.g. S3 object key
+    caption        TEXT,
+    display_order  INTEGER NOT NULL DEFAULT 0,
+    is_primary     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by     UUID,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by     UUID
+);
+CREATE INDEX ON product_image (product_id);
+-- at most one active primary image per product; same convention as tenant_contact/payer_payment_card
+CREATE UNIQUE INDEX ON product_image (product_id) WHERE is_primary;
+```
+
+### Sales Order Checkout (ADR-0029)
+
+SAP VBAK-equivalent (Sales Order header), shaped around the checkout flow's actual lifecycle rather than a full VBAK mirror — pricing/tax is never computed or stored ahead of time, only captured as the result of the live SAP simulation call, and the header tracks the checkout state machine (draft → priced → paid → created in SAP, or failed at any of those steps) alongside the identifying fields SAP itself needs.
+
+```sql
+-- Tenant-configurable shipping priority options (e.g. Standard/Expedited/
+-- Overnight), scoped per Sales Org rather than flat per Tenant — a Tenant
+-- can offer different shipping options in different Sales Orgs. Tenant
+-- scoping itself is implicit (this table lives inside the {tenant} schema,
+-- same as invoice_type/notification_template), sales_org narrows it
+-- further. Natural composite key, matching the convention already used
+-- for company_code/sales_org/plant/purchase_org rather than a surrogate
+-- UUID for pure reference data.
+CREATE TABLE shipping_priority (
+    sales_org   TEXT NOT NULL REFERENCES sales_org(code),
+    code        TEXT NOT NULL,  -- e.g. 'STD', 'EXP', 'OVN'
+    name        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID,
+    PRIMARY KEY (sales_org, code)
+);
+
+-- SAP TVAK-equivalent (Sales Document Type customizing), extracted per
+-- Tenant rather than seeded — same reasoning as invoice_type: SAP Sales
+-- Document Types are customized per implementation (a Tenant may define
+-- its own Z-order types), not a fixed platform-wide list.
+CREATE TABLE sales_order_type (
+    code        TEXT PRIMARY KEY,  -- SAP AUART, e.g. 'OR' (Standard Order), 'CS' (Cash Sale), or a Tenant's own custom Z-type
+    name        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID
+);
+
+-- SAP TVLS-equivalent (Delivery Block Reasons), extracted per Tenant
+-- rather than seeded — same reasoning as sales_order_type/invoice_type:
+-- customized per SAP implementation. Scoped per Sales Order Type — a
+-- Tenant may want a different available set of block reasons per Order
+-- Type (e.g. 'CS' Cash Sale orders offering different reasons than 'OR'
+-- Standard orders) — same composite-key-over-surrogate-UUID convention
+-- already used for shipping_priority (scoped by sales_org).
+CREATE TABLE delivery_block_reason (
+    order_type  TEXT NOT NULL REFERENCES sales_order_type(code),
+    code        TEXT NOT NULL,  -- SAP LIFSP
+    name        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID,
+    PRIMARY KEY (order_type, code)
+);
+
+-- SAP TVFS-equivalent (Billing Block Reasons), extracted per Tenant —
+-- same reasoning and same Order-Type scoping as delivery_block_reason
+-- above.
+CREATE TABLE billing_block_reason (
+    order_type  TEXT NOT NULL REFERENCES sales_order_type(code),
+    code        TEXT NOT NULL,  -- SAP FAKSK
+    name        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID,
+    PRIMARY KEY (order_type, code)
+);
+
+-- sales_org/distribution_channel/division mirrors invoice's composite FK
+-- into payer_sales_area — same reasoning: payer_sales_area is the local
+-- source of truth for which Sales Areas exist for this Payer. company_code
+-- likewise composite-FKs into payer_company_code, exactly like invoice.
+-- payment_method (ADR-0029 update, extended by ADR-0032): 'credit_card',
+-- 'ach', and 'sepa' all go through the same Stripe-charge-then-FI-Down-
+-- Payment flow this table was originally designed around for cards alone
+-- — ACH/SEPA reuse it as-is, since ADR-0032 already treats a Stripe
+-- 'succeeded' event as sufficient to proceed, optimistically, the same
+-- way a card charge does. 'purchase_order' (bill-on-account/net terms)
+-- is the one method that skips payment entirely — gated by
+-- payer_company_code.po_order_allowed (checked at the application layer,
+-- not a DB constraint, same treatment as billing_block/credit_hold
+-- elsewhere in this doc) — and goes straight from pricing_simulated to
+-- SAP order creation, settling later as a normal open-AR Invoice under
+-- payer_company_code.payment_terms, same as any Invoice that didn't
+-- originate from this checkout flow. No sales_order_payment row exists
+-- for a 'purchase_order' order — that table now covers the three
+-- money-collecting methods, not 'credit_card' alone. Distinct from
+-- customer_po_number below, which is just the buyer's own procurement
+-- reference text and can be present regardless of payment_method.
+-- fulfillment_hold_flagged_at/_reason (ADR-0032 update): an ACH/SEPA-
+-- funded order's down payment can be returned DAYS after the SAP Sales
+-- Order was already created and fulfillment may already be under way —
+-- a materially higher-stakes situation than a plain Invoice payment
+-- quietly reopening. A late return against this order's
+-- sales_order_payment sets this flag (alongside the usual
+-- payment.status = 'reversed' + AR Clerk notification, ADR-0032) so
+-- whoever owns fulfillment on the Tenant side gets an explicit stop-ship
+-- signal, not just an AR-side balance correction. Always NULL for
+-- 'credit_card'/'purchase_order' orders — a card charge doesn't carry
+-- this multi-day return risk, and a purchase_order order was never paid
+-- at checkout in the first place. Most relevant to
+-- 'submit_with_delivery_block' orders (below) where fulfillment could
+-- genuinely already be moving; for 'hold_in_aiarap' orders a return
+-- before SAP creation just cancels the order outright (status =
+-- 'held_payment_returned') rather than needing a hold flag on a SAP
+-- document that was never created.
+-- delivery_block_code/delivery_block_cleared_at (ADR-0032 update):
+-- mirrors SAP's own Delivery Block (VBAK-LIFSK, a reason-coded dropdown
+-- via delivery_block_reason above, not a plain boolean — real SAP allows
+-- multiple distinct block reasons, not just "blocked/not blocked") for
+-- company_code.bank_debit_order_confirmation_mode =
+-- 'submit_with_delivery_block' orders only — set at SAP creation time
+-- (the order exists in SAP but can't generate a Delivery until cleared),
+-- cleared (set back to NULL, delivery_block_cleared_at set) once
+-- sales_order_payment.settlement_status reaches 'settled' and AIARAP
+-- calls SAP to lift it. Always NULL for 'hold_in_aiarap' orders (nothing
+-- to block — the order doesn't exist in SAP yet during the equivalent
+-- risk window) and for 'credit_card'/'purchase_order' orders.
+-- billing_block_code (SAP VBAK-FAKSK, same reason-coded dropdown
+-- treatment via billing_block_reason) — general-purpose, not exclusively
+-- tied to the ACH/SEPA flow (any Tenant user/AR Clerk can set it for any
+-- reason), but also the natural pairing with delivery_block_code for a
+-- 'submit_with_delivery_block' order — a Tenant may not want billing
+-- generated either while payment is still unsettled, not just shipment.
+-- Distinct from payer_sales_area.billing_block, which is a plain boolean
+-- at the master-data level (blocks an entire Sales Area, not one order)
+-- — real SAP's KNVV-FAKSD is genuinely just a flag, unlike VBAK-FAKSK.
+-- status is the AIARAP-side checkout state machine, not an SAP status:
+--   draft                    -- Payer still building the cart, no SAP call yet
+--   pricing_simulated        -- live SAP pricing/tax simulation returned a quote
+--   payment_failed           -- Stripe charge failed at checkout ('credit_card'/'ach'/'sepa' only — not reachable for 'purchase_order')
+--   held_pending_settlement  -- ACH/SEPA only, mode = 'hold_in_aiarap': charge succeeded but SAP order creation is deliberately deferred until sales_order_payment.settlement_status reaches 'settled'
+--   pending_sap_creation     -- charge succeeded ('credit_card' always; 'ach'/'sepa' immediately if mode = 'submit_with_delivery_block', or after leaving held_pending_settlement if mode = 'hold_in_aiarap'); 'purchase_order': approved to proceed with no charge — either way, the SAP order-creation call is in flight/retrying
+--   sap_created              -- SAP Sales Order created successfully (sap_sales_order_id set); may still carry a delivery_block_code for 'submit_with_delivery_block' orders awaiting settlement
+--   sap_creation_failed      -- retries exhausted; routed to the AR Clerk (ADR-0029's failure-handling decision) — for a money-collecting method this is after a successful charge, for 'purchase_order' there was never a charge to reverse
+--   held_payment_returned    -- ACH/SEPA only, mode = 'hold_in_aiarap': the charge was returned/NSF while the order was held, before SAP ever created it — the held-order counterpart to a plain Invoice-payment reversal, but here there's no payment/Invoice to unwind since nothing downstream was ever created
+--   cancelled                -- abandoned pre-payment (draft/pricing_simulated only — nothing to reverse)
+-- 'sap_created' is the terminal success state for THIS table — matching
+-- the eventual Invoice against sales_document = sap_sales_order_id, and
+-- driving the FI Down Payment clearing ('credit_card' orders only), both
+-- happen via sales_order_payment (a separate table, not yet designed this
+-- pass).
+-- Shipping/billing address override (moved to sales_order_partner below —
+-- address_override_* columns there, scoped to only the ship_to/bill_to
+-- partner functions).
+-- shipping_priority_code composite-FKs into shipping_priority, scoped by
+-- this order's own sales_org (a Sales Org's shipping priority list
+-- shouldn't be selectable from a different Sales Org's order).
+-- 3rd-party/collect-shipment carrier code + account number are
+-- deliberately NOT dedicated columns — they live in custom_fields below
+-- instead (per ADR-0003's generic custom-fields mechanism), same as any
+-- other Tenant-specific extension AIARAP's core schema doesn't need to
+-- model structurally.
+CREATE TABLE sales_order (
+    id                              UUID PRIMARY KEY DEFAULT uuidv7(),
+    payer_id                        UUID NOT NULL REFERENCES payer(id),
+    company_code                    TEXT NOT NULL REFERENCES company_code(code),
+    sales_org                       TEXT NOT NULL REFERENCES sales_org(code),
+    distribution_channel            TEXT NOT NULL,
+    division                        TEXT NOT NULL,
+    order_type                      TEXT NOT NULL REFERENCES sales_order_type(code),  -- SAP VBAK-AUART
+    payment_method                  TEXT NOT NULL CHECK (payment_method IN ('credit_card', 'ach', 'sepa', 'purchase_order')),
+    customer_po_number              TEXT,  -- SAP VBKD-BSTNK (Customer PO Number) — the Payer's own procurement reference, purely informational
+    requested_delivery_date         DATE,  -- SAP VBAK-VDATU
+    currency                        TEXT NOT NULL REFERENCES currency(code),  -- SAP VBAK-WAERK; set from the start (e.g. defaulted from payer_sales_area.currency) — also the currency the live pricing/tax quote below is returned in, no separate column needed for that
+    incoterms_1                     TEXT,  -- SAP VBAK-INCO1, e.g. 'FOB', 'CIF' — same naming convention as payer_sales_area.incoterms_1
+    incoterms_2                     TEXT,  -- SAP VBAK-INCO2, named place/location qualifying incoterms_1
+    status                          TEXT NOT NULL DEFAULT 'draft'
+                                    CHECK (status IN ('draft', 'pricing_simulated', 'payment_failed', 'held_pending_settlement', 'pending_sap_creation', 'sap_created', 'sap_creation_failed', 'held_payment_returned', 'cancelled')),
+    sap_sales_order_id              TEXT,  -- SAP VBAK-VBELN; NULL until status = 'sap_created'
+    priced_at                       TIMESTAMPTZ,  -- when the live SAP pricing/tax simulation call last returned
+    net_amount                      NUMERIC(18,2),
+    tax_amount                      NUMERIC(18,2),
+    total_amount                    NUMERIC(18,2),  -- what the Payer is actually charged at checkout
+    raw_pricing_simulation          JSONB,  -- full SAP simulation response, for checkout summary display and audit/troubleshooting — same "structured columns for what's queried, JSONB for the rest" pattern as payment_provider_webhook_event.payload
+    sap_creation_status             TEXT NOT NULL DEFAULT 'pending'
+                                    CHECK (sap_creation_status IN ('pending', 'posted', 'failed')),
+    sap_creation_attempts           INTEGER NOT NULL DEFAULT 0,
+    sap_creation_last_error         TEXT,
+    ar_clerk_notified_at            TIMESTAMPTZ,  -- set when sap_creation_status reaches 'failed' after exhausting retries — routed to payer_company_code.accounting_clerk_user_id per ADR-0029
+    fulfillment_hold_flagged_at     TIMESTAMPTZ,  -- ADR-0032: set on a late ACH/SEPA return against this order's sales_order_payment, after sap_created — a stop-ship signal for the Tenant's fulfillment owner, distinct from the AR-side payment.status='reversed' correction
+    fulfillment_hold_reason          TEXT,
+    delivery_block_code              TEXT,  -- SAP VBAK-LIFSK; NULL = not blocked. Set at SAP creation time for 'submit_with_delivery_block' orders, cleared (set back to NULL) once settlement confirmed. Composite-FKs into delivery_block_reason(order_type, code) below — scoped by THIS order's own order_type, same convention as shipping_priority_code's sales_org scoping
+    delivery_block_cleared_at        TIMESTAMPTZ,
+    billing_block_code               TEXT,  -- SAP VBAK-FAKSK; NULL = not blocked. Composite-FKs into billing_block_reason(order_type, code) below
+    shipping_priority_code          TEXT,  -- SAP VBAK-LPRIO-equivalent
+    custom_fields                   JSONB NOT NULL DEFAULT '{}'::jsonb,  -- carries 3rd-party carrier code + account number, among any other Tenant-specific extensions
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                      UUID,
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                      UUID,
+    CONSTRAINT sales_order_company_code_fk
+        FOREIGN KEY (payer_id, company_code)
+        REFERENCES payer_company_code (payer_id, company_code),
+    CONSTRAINT sales_order_sales_area_fk
+        FOREIGN KEY (payer_id, sales_org, distribution_channel, division)
+        REFERENCES payer_sales_area (payer_id, sales_org, distribution_channel, division),
+    CONSTRAINT sales_order_shipping_priority_fk
+        FOREIGN KEY (sales_org, shipping_priority_code)
+        REFERENCES shipping_priority (sales_org, code),
+    CONSTRAINT sales_order_delivery_block_fk
+        FOREIGN KEY (order_type, delivery_block_code)
+        REFERENCES delivery_block_reason (order_type, code),
+    CONSTRAINT sales_order_billing_block_fk
+        FOREIGN KEY (order_type, billing_block_code)
+        REFERENCES billing_block_reason (order_type, code)
+);
+CREATE UNIQUE INDEX ON sales_order (sap_sales_order_id) WHERE sap_sales_order_id IS NOT NULL;
+CREATE INDEX ON sales_order (order_type);
+CREATE INDEX ON sales_order (payment_method);
+CREATE INDEX ON sales_order (payer_id);
+CREATE INDEX ON sales_order (payer_id, company_code);
+CREATE INDEX ON sales_order (payer_id, sales_org, distribution_channel, division);
+CREATE INDEX ON sales_order (status);
+CREATE INDEX ON sales_order (sales_org, shipping_priority_code);
+-- drives the checkout-failure sweep that retries SAP order creation
+CREATE INDEX ON sales_order (sap_creation_status) WHERE sap_creation_status IN ('pending', 'failed');
+-- drives the fulfillment-hold worklist for the Tenant's fulfillment owner
+CREATE INDEX ON sales_order (fulfillment_hold_flagged_at) WHERE fulfillment_hold_flagged_at IS NOT NULL;
+-- drives the Sales Order Bank-Debit Confirmation Batch's delivery-block-clearing sweep
+CREATE INDEX ON sales_order (delivery_block_code) WHERE delivery_block_code IS NOT NULL;
+CREATE INDEX ON sales_order (billing_block_code) WHERE billing_block_code IS NOT NULL;
+
+-- SAP TPAR-equivalent (Partner Function customizing) — Tenant-editable,
+-- seeded with the common defaults ('WE' Ship-to, 'RE' Bill-to, 'RG'
+-- Payer/payer-of-invoice) but not hardcoded to just those; a Tenant can
+-- define its own additional partner functions, same "Tenant-editable,
+-- seeded with defaults" pattern as invoice_type/notification_template.
+-- 'AG' (Sold-to) is deliberately NOT seeded here — sales_order.payer_id
+-- already IS the Sold-to, so it stays implicit rather than duplicated as
+-- a row in sales_order_partner below.
+CREATE TABLE partner_function (
+    code        TEXT PRIMARY KEY,  -- e.g. 'WE', 'RE', 'RG', or a Tenant's own custom code
+    name        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by  UUID
+);
+
+-- SAP VBPA-equivalent (Sales Order Partners) — fully configurable via
+-- partner_function above, not hardcoded to Ship-to/Bill-to only. Sold-to
+-- stays implicit (sales_order.payer_id itself, never a row here). Any
+-- other partner function can each independently point at a DIFFERENT
+-- Payer (e.g. a child customer under payer_hierarchy) than the ordering
+-- Payer. Kept header-level, not per-line, for Phase 1 simplicity — SAP
+-- itself supports item-level partner overrides, not modeled here.
+-- partner_payer_id is not constrained by a DB check to be
+-- hierarchy-related to sales_order.payer_id — validated at the
+-- application layer against payer_hierarchy (time-sliced/sales-area-
+-- scoped, not practical to express as a static FK/CHECK), same
+-- "app-layer validation" treatment as payer_hierarchy's own
+-- non-overlapping-date-range rule elsewhere in this doc.
+-- address_override_*: a freeform, order-specific address override — NULL
+-- = use this partner_payer_id's own registered Payer address; set = a
+-- one-off different address (e.g. a job site) with no Payer/hierarchy
+-- record of its own, distinct from picking a different Payer as the
+-- partner. Deliberately restricted to the ship_to and bill_to functions
+-- only (enforced by the CHECK constraint below) — a physical/billing
+-- address override doesn't make sense for an arbitrary Tenant-defined
+-- partner function the way it does for these two. Moved here from a flat
+-- set of columns on sales_order itself — an address override
+-- conceptually belongs to a specific partner, not the order header.
+CREATE TABLE sales_order_partner (
+    id                        UUID PRIMARY KEY DEFAULT uuidv7(),
+    sales_order_id            UUID NOT NULL REFERENCES sales_order(id),
+    partner_function          TEXT NOT NULL REFERENCES partner_function(code),
+    partner_payer_id          UUID NOT NULL REFERENCES payer(id),
+    address_override_line1    TEXT,
+    address_override_line2    TEXT,
+    address_override_city     TEXT,
+    address_override_state    TEXT,
+    address_override_postal   TEXT,
+    address_override_country  TEXT,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                UUID,
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                UUID,
+    UNIQUE (sales_order_id, partner_function),
+    CONSTRAINT sales_order_partner_address_override_chk
+        CHECK (
+            partner_function IN ('ship_to', 'bill_to')
+            OR (address_override_line1 IS NULL AND address_override_line2 IS NULL
+                AND address_override_city IS NULL AND address_override_state IS NULL
+                AND address_override_postal IS NULL AND address_override_country IS NULL)
+        )
+);
+CREATE INDEX ON sales_order_partner (sales_order_id);
+CREATE INDEX ON sales_order_partner (partner_function);
+CREATE INDEX ON sales_order_partner (partner_payer_id);
+
+-- SAP VBAP-equivalent (Sales Document Item). Shaped like invoice_line
+-- (the analogous VBRP-equivalent) — unit_price/net_amount/tax_amount/
+-- line_amount hold this line's share of the live SAP pricing/tax
+-- simulation result (populated once sales_order.status reaches
+-- 'pricing_simulated', NULL before that), with the header's own
+-- net_amount/tax_amount/total_amount being the rollup across all lines,
+-- same header/line split as invoice/invoice_line's total_amount vs. line
+-- amounts. No account-assignment columns (profit_center/cost_center/etc.,
+-- present on invoice_line) — unlike a Bill/Invoice line, a Payer
+-- self-service checkout line has no such data to enter; SAP derives
+-- account assignment itself from Material/Customer master at order
+-- creation time, the same "SAP is the authority, AIARAP doesn't own the
+-- derivation" principle already applied to pricing/tax.
+-- uom stays plain TEXT, not a composite FK — a line can legally be either
+-- product.base_uom (never a product_uom row, by that table's own design)
+-- or a row in product_uom, and a single composite FK can't express an
+-- "OR the base unit" condition; validated at the application layer
+-- instead, same treatment product_uom's own comment already flags.
+-- delivering_plant defaults from product_sales_org.delivering_plant at
+-- line-creation time but can be overridden per line, matching real SAP
+-- WERKS behavior (Sales Area context supplies a default, item-level can
+-- still differ). Whether the chosen product is actually listed/not
+-- blocked for this order's Sales Org/Distribution Channel
+-- (product_sales_org) is an application-layer check, not a DB constraint
+-- — sales_order itself carries sales_org/distribution_channel (not
+-- duplicated here), and "blocked" is a value check a FK can't express
+-- anyway, consistent with billing_block/credit_hold elsewhere in this doc.
+CREATE TABLE sales_order_line (
+    id                      UUID PRIMARY KEY DEFAULT uuidv7(),
+    sales_order_id          UUID NOT NULL REFERENCES sales_order(id),
+    line_number             INTEGER NOT NULL,
+    product_id              UUID NOT NULL REFERENCES product(id),
+    quantity                NUMERIC(15,3) NOT NULL,  -- SAP VBAP-KWMENG
+    uom                     TEXT NOT NULL,  -- the Payer-selected order unit
+    requested_delivery_date  DATE,  -- SAP VBEP-EDATU-equivalent input (the requested date, as entered — distinct from sales_order_schedule_line.confirmed_delivery_date, which is SAP's own ATP-confirmed output). Defaults from sales_order.requested_delivery_date at line-creation time, but the Payer can override it per line before simulating
+    delivering_plant        TEXT REFERENCES plant(code),  -- SAP VBAP-WERKS
+    unit_price              NUMERIC(18,4),   -- from the live SAP pricing simulation; NULL until sales_order.status reaches 'pricing_simulated'
+    net_amount              NUMERIC(18,2),
+    tax_amount              NUMERIC(18,2),
+    line_amount             NUMERIC(18,2),   -- net + tax; sums to sales_order.total_amount across all lines
+    currency                TEXT REFERENCES currency(code),  -- mirrors the header's currency; carried here too, same convention as invoice_line.currency alongside invoice.currency
+    custom_fields           JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by              UUID,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by              UUID,
+    UNIQUE (sales_order_id, line_number)
+);
+CREATE INDEX ON sales_order_line (sales_order_id);
+CREATE INDEX ON sales_order_line (product_id);
+CREATE INDEX ON sales_order_line (delivering_plant);
+
+-- SAP VBEP-equivalent (Schedule Lines) — display-only, populated entirely
+-- from the live SAP pricing/tax simulation call (ADR-0029), the same one
+-- that fills sales_order_line.unit_price/net_amount/tax_amount/
+-- line_amount. When availability/ATP splits a line's ordered quantity
+-- across multiple confirmed delivery dates (e.g. partial stock now, the
+-- remainder later), SAP returns one schedule line per split — AIARAP
+-- stores and shows them as-is, never creates/edits one itself. No
+-- write path back to SAP exists for this table, consistent with "SAP is
+-- the authority, AIARAP doesn't own the derivation" already applied to
+-- pricing/tax/account-assignment elsewhere in the Sales Order Checkout
+-- domain. Re-simulating the order (e.g. the Payer changes the cart)
+-- replaces a line's schedule lines wholesale rather than updating them in
+-- place — an insert-only snapshot of the simulation's own result, same
+-- "immutable point-in-time record" treatment as card_payment_attempt
+-- (no updated_at/updated_by, since nothing about a row changes after
+-- insert; a re-simulation deletes and reinserts instead).
+CREATE TABLE sales_order_schedule_line (
+    id                        UUID PRIMARY KEY DEFAULT uuidv7(),
+    sales_order_line_id      UUID NOT NULL REFERENCES sales_order_line(id),
+    schedule_line_number      INTEGER NOT NULL,  -- SAP VBEP-ETENR
+    confirmed_quantity        NUMERIC(15,3) NOT NULL,  -- SAP VBEP-BMENG
+    confirmed_delivery_date   DATE,  -- SAP VBEP-EDATU
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                UUID,
+    UNIQUE (sales_order_line_id, schedule_line_number)
+);
+CREATE INDEX ON sales_order_schedule_line (sales_order_line_id);
+
+-- Tracks the checkout-time charge collected BEFORE any Invoice exists,
+-- and the FI Down Payment it gets posted to SAP as (ADR-0029) — every
+-- money-collecting payment_method ('credit_card', 'ach', 'sepa', per
+-- ADR-0032's extension); a 'purchase_order' order never creates a row
+-- here (see sales_order's payment_method comment). Same "detail table
+-- for the AIARAP/Stripe-specific mechanics" role card_payment/
+-- bank_debit_payment already play for Invoice-time charges, one step
+-- earlier in the lifecycle (no invoice_id to attach to yet at this
+-- point).
+-- payment_method distinguishes which of the three applies, since ACH/SEPA
+-- carry the multi-day settlement_status/return_code tracking
+-- bank_debit_payment already has and 'credit_card' doesn't need it
+-- (always NULL for 'credit_card' rows, same nullable-when-not-applicable
+-- treatment used elsewhere in this doc).
+-- sap_posting_status/attempts/last_error mirrors card_payment's own SAP
+-- write-back retry shape. sap_reference_written is the value AIARAP writes
+-- into the FI Down Payment's own reference/assignment field (SAP
+-- BSEG-ZUONR/XREF1) at posting time — always sales_order.sap_sales_order_id
+-- — which is what lets AIARAP (not a clerk) later drive the clearing match
+-- precisely, avoiding FI Down Payment's real-world misapplication risk
+-- (ADR-0029's core reasoning for choosing FI over SD). clearing_status
+-- tracks that later step: 'pending' until AIARAP matches the eventual
+-- Invoice (via invoice_line.sales_document = sales_order.sap_sales_order_id)
+-- and drives/verifies the down payment clearing itself; 'cleared' once
+-- done, with matched_invoice_id set and a normal payment row created
+-- against that Invoice (payment.sales_order_payment_id points back here,
+-- same role payment.card_payment_id already plays) so
+-- invoice.open_amount's derivation keeps working uniformly regardless of
+-- source; 'mismatch_flagged' if AIARAP's own automated clearing attempt
+-- doesn't reconcile cleanly (e.g. SAP's own auto-clearing already applied
+-- it elsewhere before AIARAP's check ran) — surfaced for manual
+-- investigation rather than silently retried.
+-- A late ACH/SEPA return against a row here (settlement_status =
+-- 'returned') doesn't just flip the resulting payment row to 'reversed'
+-- the way a direct Invoice-payment return does (ADR-0032's base case) —
+-- it ALSO sets sales_order.fulfillment_hold_flagged_at, since by this
+-- point the SAP Sales Order may already be created and fulfillment
+-- already under way, a materially higher-stakes situation than an
+-- Invoice quietly reopening.
+CREATE TABLE sales_order_payment (
+    id                              UUID PRIMARY KEY DEFAULT uuidv7(),
+    sales_order_id                  UUID NOT NULL REFERENCES sales_order(id),
+    payer_id                        UUID NOT NULL REFERENCES payer(id),
+    payment_method                  TEXT NOT NULL CHECK (payment_method IN ('credit_card', 'ach', 'sepa')),
+    amount                          NUMERIC(18,2) NOT NULL,
+    currency                        TEXT NOT NULL REFERENCES currency(code),
+    provider                        TEXT NOT NULL DEFAULT 'stripe',
+    provider_charge_ref              TEXT NOT NULL,  -- e.g. Stripe PaymentIntent/Charge ID
+    charged_at                      TIMESTAMPTZ NOT NULL,
+    settlement_status               TEXT CHECK (settlement_status IN ('pending', 'settled', 'returned')),  -- ACH/SEPA only (ADR-0032); NULL for 'credit_card'
+    settled_at                      TIMESTAMPTZ,  -- ACH/SEPA only
+    returned_at                     TIMESTAMPTZ,  -- ACH/SEPA only
+    return_code                     TEXT,  -- ACH/SEPA only — same return-code shape as bank_debit_payment.return_code
+    return_reason                    TEXT,  -- ACH/SEPA only
+    sap_down_payment_document       TEXT,  -- SAP FI special-G/L document number, once posted
+    sap_down_payment_document_year  TEXT,  -- pairs with sap_down_payment_document, same fiscal-year-scoping reasoning as invoice.fi_document_year
+    sap_reference_written           TEXT,  -- value written into the down payment's own BSEG-ZUONR/XREF1 — always sales_order.sap_sales_order_id
+    sap_posting_status              TEXT NOT NULL DEFAULT 'pending'
+                                    CHECK (sap_posting_status IN ('pending', 'posted', 'failed')),
+    sap_posting_attempts            INTEGER NOT NULL DEFAULT 0,
+    sap_posting_last_error          TEXT,
+    clearing_status                 TEXT NOT NULL DEFAULT 'pending'
+                                    CHECK (clearing_status IN ('pending', 'cleared', 'mismatch_flagged')),
+    cleared_at                      TIMESTAMPTZ,
+    matched_invoice_id              UUID REFERENCES invoice(id),  -- set once clearing_status = 'cleared'
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by                      UUID,
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by                      UUID,
+    UNIQUE (provider, provider_charge_ref)
+);
+CREATE INDEX ON sales_order_payment (sales_order_id);
+CREATE INDEX ON sales_order_payment (payer_id);
+CREATE INDEX ON sales_order_payment (matched_invoice_id);
+-- drives the SAP down payment posting retry sweep
+CREATE INDEX ON sales_order_payment (sap_posting_status) WHERE sap_posting_status IN ('pending', 'failed');
+-- drives the clearing-match sweep against newly-extracted Invoices
+CREATE INDEX ON sales_order_payment (clearing_status) WHERE clearing_status = 'pending';
 ```
 

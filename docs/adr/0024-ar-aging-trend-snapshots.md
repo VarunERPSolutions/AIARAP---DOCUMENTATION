@@ -29,6 +29,12 @@ Comparing an Invoice's row across two `ar_aging_snapshot_invoice` runs (e.g. the
 
 $50K → $30K in one bucket, for example, decomposes as: (sum of `incoming_cash` + `credit_issued` + `bad_debt_writeoff` payments against invoices in that bucket) + (amount that `aged` out to a worse bucket, netted against amount that aged **in** from a better one) + (`reallocated` amount) + (`new` invoices entering the bucket) = the $20K delta, fully accounted for.
 
+## Pending Down Payments are visible, but never blended into a bucket (resolved, parking lot item 39)
+
+A Payer checking their AIARAP balance should see the true full picture — open Invoices *and* any pending Sales Order Down Payment (`sales_order_payment`, ADR-0029) not yet applied — not just the aging buckets. `ar_aging_snapshot_down_payment` (new) carries a per-run summary (`pending_amount`/`order_count`), same Payer/Company Code/currency grain as `ar_aging_snapshot_bucket`, so the dashboard can show it as a clearly separate line.
+
+Deliberately **not** folded into any bucket, including "Current" (`bucket_id IS NULL`): a Down Payment isn't an aged receivable at all — it's a credit already collected, awaiting application to a future Invoice. Showing it inside a bucket would misrepresent already-collected money as something still owed. Same reasoning AR Reconciliation (ADR-0023) applies to its own equivalent addition.
+
 ## Open items
 
 - Exact scheduled cadence (weekly proposed, not committed) and how far back snapshot history is retained before any archival/pruning.

@@ -2,6 +2,8 @@
 
 A new job extracts Stripe's daily payout details and verifies every AIARAP-originated transaction matches between `card_payment` and what Stripe actually settled — closing the loop between "Stripe told AIARAP the charge succeeded" (`card_payment`, [ADR-0019](0019-automatic-card-payment-batch.md)) and "Stripe actually paid it out to the Tenant's bank account."
 
+**Update ([ADR-0032](0032-ach-sepa-bank-debit-payments.md))**: Stripe Connect is now one account per **Company Code**, not per Tenant (ADR-0020's reopened premise) — this job runs per Company Code, `tenant_settings.stripe_payout_interval`/`stripe_payout_delay_days` referenced below are now `company_code.stripe_payout_interval`/`stripe_payout_delay_days`, and a Tenant with multiple Company Codes gets independent payout reconciliation runs (and independent payout schedules) per one, not a single Tenant-wide run. Everything else below — bucketing, FX handling, discrepancy types, UTC-cutoff timing — is unchanged, just re-scoped.
+
 ## AIARAP-origin is inferred, not tagged
 
 A Tenant's Stripe Connected Account (ADR-0020) isn't necessarily used only by AIARAP — it can carry charges from SAP-adjacent processes or other systems the Tenant already had. Stripe itself has no concept of "this charge came from AIARAP." So `stripe_payout_transaction.matched_card_payment_id` is populated purely by matching `stripe_charge_ref` against an existing `card_payment.provider_charge_ref` — a transaction with no match isn't an error, it's simply not AIARAP's to explain.
@@ -35,9 +37,29 @@ Stripe's balance-transaction day boundary is **GMT/UTC midnight**, not the Tenan
 
 ## Tier and cadence (resolved)
 
-**NestJS, daily** — same category as AR Reconciliation (ADR-0023): no money movement, no restart-safety stakes, just extraction and comparison. Daily cadence is safe as a default even for a Tenant on a weekly or monthly Stripe payout schedule instead of daily — the job simply finds no new payout to check on the days none exists, which is harmless, versus a slower cadence potentially missing/delaying detection for Tenants who are on daily payouts.
+**NestJS, daily** — same category as AR Reconciliation (ADR-0023): no money movement, no restart-safety stakes, just extraction and comparison. Daily cadence is safe as a default even for a Company Code on a weekly or monthly Stripe payout schedule instead of daily — the job simply finds no new payout to check on the days none exists, which is harmless, versus a slower cadence potentially missing/delaying detection for Company Codes on daily payouts.
+
+## Default seed mapping (resolved, parking lot item 29)
+
+Compiled against Stripe's current `balance_transaction.type` API reference. Each bucket's reasoning:
+
+| Bucket | Stripe types | Reasoning |
+|---|---|---|
+| `charge` | `charge`, `payment` | Same economic event (money in from a customer) — old vs. PaymentIntents-era naming |
+| `refund` | `refund`, `payment_refund`, `payment_failure_refund`, `application_fee_refund` | Grouped by "money moving back to the customer/counterparty," regardless of which specific flow triggered it |
+| `fee` | `application_fee`, `stripe_fee`, `stripe_fx_fee`, `tax_fee` | Costs deducted by Stripe or the platform |
+| `reserve` | `reserve_transaction`, `reserved_funds` | Funds Stripe holds back on risk grounds |
+| `payout` | `payout`, `payout_cancel`, `payout_failure` | The actual settlement to the Tenant's bank |
+| `adjustment` | `adjustment`, `payment_reversal`, `refund_failure` | Corrections that aren't cleanly a refund of a specific charge |
+| `transfer` | `transfer`, `transfer_refund`, `transfer_cancel`, `transfer_failure`, `connect_collection_transfer` | Stripe Connect account-to-account movement |
+| `other` | `topup`, `topup_reversal`, `advance`, `advance_funding`, `anticipation_repayment`, `contribution`, `climate_order_purchase`, `climate_order_refund`, `issuing_authorization_hold`, `issuing_authorization_release`, `issuing_dispute`, `issuing_transaction`, `payment_unreconciled` | Genuinely irrelevant to AIARAP's own integration (Stripe Capital/Climate/Issuing aren't products AIARAP uses) — seeded only defensively in case a Tenant's shared Connected Account carries unrelated activity from another system |
+
+**Not authoritative forever** — Stripe adds `balance_transaction.type` values over time; verify against Stripe's live API reference before this seed data ships, same "verify at implementation time" treatment as other exact third-party specifics in this doc. `stripe_payout_transaction.transaction_type`'s FK means an unmapped new type fails extraction loudly rather than silently miscategorizing, so this list going stale is self-detecting, not a silent risk.
+
+**Debit/credit G/L account fields, reference only, and per-bucket customer-routing**: `stripe_transaction_type_bucket` also carries `debit_gl_account`/`credit_gl_account` (which SAP G/L account a Tenant's finance team would use for this bucket, shown on the reconciliation view for their own manual journal entry) and `debit_posts_to_customer`/`credit_posts_to_customer` (real double-entry AR posting routes one side to the transaction's own Customer/Payer reconciliation account instead of a fixed G/L account — SAP KNB1-AKONT-style — and *which* side varies by bucket: a `charge` credits the Customer, reducing the receivable when payment arrives; a `refund` debits the Customer, reinstating it; `fee`/`reserve`/`payout`/`transfer`/`other` involve no Customer at all, both sides are fixed G/L accounts). These are seedable defaults for the customer-routing flags (universal accounting logic, not Tenant-specific); the actual G/L account *codes* are each Tenant's own chart of accounts, left blank for them to fill in — **this is reference data only, not an automated GL posting mechanism**. "Automated GL posting to SAP" remains explicitly Out of Scope for Phase 1 per the spec; no job reads these fields to actually post anything.
+
+Also scoped per **Company Code**, not flat per Tenant — G/L accounts are genuinely Company-Code-specific in SAP (different legal entities have different charts of accounts), consistent with everything else that moved to Company-Code grain once Stripe Connect did (ADR-0020/0032). `stripe_payout`/`stripe_payout_transaction` both gained a `company_code` column as a result — a payout comes from exactly one Company Code's Connected Account, and `transaction_type`'s FK into `stripe_transaction_type_bucket` is now a composite `(company_code, transaction_type)` reference to match that table's new composite key.
 
 ## Open items
 
 - Exact safety-margin width added on top of `stripe_payout_delay_days` (proposed: 2 days) isn't firmly tuned — a reasonable starting point, not a committed value.
-- The exact default seed mapping of every current Stripe `balance_transaction.type` value to a bucket isn't enumerated in this ADR — the mechanism (`stripe_transaction_type_bucket`) is designed, not the specific seed data, which should be compiled against Stripe's current API reference at implementation time.

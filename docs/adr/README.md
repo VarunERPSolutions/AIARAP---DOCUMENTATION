@@ -31,6 +31,7 @@ Index of AIARAP's ADRs. Full spec: [docs/spec/0001-ar-ap-phase-1.md](../spec/000
 | [0025](0025-stripe-payout-reconciliation.md) | Stripe payout reconciliation: AIARAP-origin inferred by matching (not tagged, since a Tenant's Connected Account can carry non-AIARAP charges), full payout composition surfaced, UTC-cutoff-aware rolling-window matching with a per-Tenant grace period auto-derived from Stripe's own payout schedule API, Tenant-editable bucketing of Stripe's raw transaction types, FX gain/loss separated from Stripe fees |
 | [0026](0026-notification-channel.md) | Notification Channel: Email-only Phase 1 (SMS schema-ready, gated), template-driven and Tenant-editable, per-notification-type sender identity registration with provider-verification fallback |
 | [0027](0027-salesforce-appexchange-integration.md) | Salesforce AppExchange Integration: AIARAP-built managed package, OAuth 2.0 auth (Named/External Credentials), broader-than-payments scope, third distinct integration boundary alongside Payment Provider and SAP Integration Adapter; same "richer payload for critical data" principle as the SAP webhook |
+| [0028](0028-tailscale-node-deauth-incident.md) | **Incident postmortem** — Tailscale node de-authorization across 6 AWS nodes: EC2 stop/start invalidated SAP node sessions (needed re-login); a manually-added Ephemeral tag caused full node deletion/re-registration on the other 4, requiring new Tailscale IPs and DNS updates |
 
 ## Stack summary
 

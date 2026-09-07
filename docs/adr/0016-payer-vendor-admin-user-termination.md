@@ -1,5 +1,7 @@
 # Payer/Vendor Admin: Terminate Own Users
 
+**Phase 1 scope note ([ADR-0035](0035-ap-functionality-moved-to-phase-2.md))**: this ADR's mechanics apply equally to Payer and Vendor, but Vendor-side terminations are Phase 2 alongside the rest of AP. Read every "Payer/Vendor" below as **Payer-only for Phase 1**; the design is unchanged and applies to Vendor once AP ships.
+
 A Payer Admin or Vendor Admin can terminate (deactivate) regular Users within their own Payer/Vendor organization — an extension of their existing authority to manage Users in their own org (`CONTEXT.md`).
 
 - **Deactivation, not deletion**, consistent with every other termination/offboarding decision in this spec ([ADR-0013](0013-employee-offboarding-reassignment.md), [ADR-0014](0014-tenant-managed-payer-vendor-user-onboarding-offboarding.md)) — the User/Contact record and their historical activity stay intact and reversible; only access is revoked.

@@ -1,5 +1,7 @@
 # Payer/Vendor Admin Bootstrap via Access Request Routing
 
+**Phase 1 scope note ([ADR-0035](0035-ap-functionality-moved-to-phase-2.md))**: this ADR's mechanics apply equally to Payer and Vendor, but Vendor-side bootstrap is Phase 2 alongside the rest of AP. Read every "Payer/Vendor" below as **Payer-only for Phase 1**; the design is unchanged and applies to Vendor once AP ships.
+
 Closes a gap in the existing Access model (`CONTEXT.md`): routing an Access Request to "the relevant Payer/Vendor Admin" assumes one already exists, but a brand-new Payer/Vendor relationship starts with zero Users — there's no one to route the very first request to.
 
 ## Identity vs. role, for context

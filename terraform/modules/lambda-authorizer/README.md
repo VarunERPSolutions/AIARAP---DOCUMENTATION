@@ -19,13 +19,32 @@ authorizer at all. Per request, it:
    since each backend is one REST API with one stage per environment (dev,
    qa, prd — see `terraform/shared`), the stage API Gateway already
    resolved *is* the environment, by construction.
-4. Requires the token's `scope` claim to contain `<backend>.invoke.<stage>`;
-   allows or denies accordingly.
+4. Requires the token's `scope` claim to contain **any** of
+   `<backend>.invoke.<stage>` (M2M, Tenant Salesforce/SAP),
+   `<backend>.portal.<stage>` (Payer/Vendor/Tenant User login), or
+   `<backend>.support.<stage>` (AIARAP support staff login) — the last two
+   added by [ADR-0033](../../../docs/adr/0033-public-portal-support-app-exposure.md).
+   Allows or denies accordingly, and passes which one matched through as
+   `context.purpose` (`invoke`/`portal`/`support`).
 5. Returns an IAM policy wildcarded to `stage/*/*` of the invoking API, not
    just the one method that was called — the decision only ever depends on
    (scope, apiId, stage), never on which specific operation was hit, so this
    is what keeps a later caching config from denying `/orders` because a
    cached policy was pinned to `/invoices`.
+
+**Deliberate gap, solved downstream, not here**: with three purposes now
+able to share one stage (step 4), this wildcard means a valid `portal`
+token is just as "allowed" onto every route as an `invoke` or `support`
+token would be — this function only ever answers "is this token valid for
+this backend+stage at all," never "which routes can this specific purpose
+reach." That per-route restriction is enforced by `AIARAP-node-backend`'s
+`ScopeGuard` (`src/gateway-client/scope.guard.ts`) — registered globally,
+fails closed on any route missing `@RequireScope`, and re-verifies the
+token independently rather than trusting this authorizer's decision (the
+API Gateway HTTP_PROXY integration has no request-parameter mapping
+forwarding `context.*` into the backend request, so nothing from this
+function's decision survives into NestJS except the original
+`Authorization` header). See ADR-0033 and parking lot #55 (resolved).
 
 ## Inputs this module needs from the shared stack
 

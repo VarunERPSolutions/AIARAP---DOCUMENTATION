@@ -2,15 +2,24 @@
 
 Last updated: 2026-09-03
 Companion visual: `architecture-diagram.html` (same folder) — Figure 1 covers
-sections 1–9 below (employee/Tailscale access); Figure 2 covers section 11
-(the customer integration hub).
+sections 1–9 below (developer/infra-admin access, narrowed by
+[ADR-0033](../adr/0033-public-portal-support-app-exposure.md) — see that note
+before assuming Tailscale still gates app traffic); Figure 2 covers section 11
+(the Tenant integration hub, machine-to-machine only); Figure 5 covers the
+public portal/support app access ADR-0033 introduced, not yet reflected in
+the sections below.
 
 ## 1. Overview
 
-Employees connect to all AWS-hosted servers through **Tailscale** (a WireGuard-based
-mesh VPN) instead of public IPs. Access is scoped per employee via Tailscale ACL
-groups/tags. Two AWS-native services (SAP HANA/ADS via SSH, and RDS) that can't run a
-Tailscale client directly are reached via a small subnet-router instance.
+Developers and infra admins reach all AWS-hosted servers through **Tailscale**
+(a WireGuard-based mesh VPN) instead of public IPs — for SSH/deploy access and
+SAP HANA/ADS/RDS admin, not for reaching the portal apps themselves (per
+[ADR-0033](../adr/0033-public-portal-support-app-exposure.md), `react-external-app`
+and `react-support-app` are both public-internet, all environments — see
+`architecture-diagram.html` Figure 5). Access is scoped per employee via
+Tailscale ACL groups/tags. Two AWS-native services (SAP HANA/ADS via SSH, and RDS)
+that can't run a Tailscale client directly are reached via a small subnet-router
+instance.
 
 - **AWS Account**: `043207749006`, region `us-east-1`
 - **VPC**: `vpc-072f816875fedf904` (default VPC, CIDR `172.31.0.0/16`, 6 subnets across AZs)

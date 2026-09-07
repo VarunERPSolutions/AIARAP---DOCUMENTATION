@@ -948,13 +948,21 @@ CREATE TABLE plant (
     updated_by       UUID
 );
 
+-- Phase 2 scope (ADR-0035) — AP moved to Phase 2 in its entirety, not just
+-- sequenced after AR (superseding the "parking lot item 11" reasoning this
+-- comment originally cited). purchase_org and its two assignment tables
+-- immediately below (purchase_org_company_code, purchase_org_plant) are
+-- kept as already-designed DDL, not deployed/migrated as part of Phase 1 —
+-- re-derive nothing here when AP work resumes. (company_code_plant,
+-- sales_org_distribution_channel_plant, payer_sales_area, and
+-- payer_company_code further down are general/AR-side master data, not
+-- part of this Phase 2 scope note — see the separate note before `vendor`.)
+--
 -- SAP T024E-equivalent (Purchasing Organizations). AP-domain master data —
--- deliberately kept a bare master table for now (Vendor/AP DDL remains
--- deferred per the AR-before-AP sequencing, parking lot item 11;
--- vendor_purchasing_org is not retrofitted to reference this yet), but its
--- two assignment tables below are built alongside it now per this
--- session's request rather than waiting for the full AP domain review
--- pass.
+-- deliberately kept a bare master table for now (vendor_purchasing_org is
+-- not retrofitted to reference this yet), but its two assignment tables
+-- below were built alongside it per an earlier session's request rather
+-- than waiting for the full AP domain review pass.
 CREATE TABLE purchase_org (
     code        TEXT PRIMARY KEY,  -- SAP EKORG
     name        TEXT NOT NULL,
@@ -1086,6 +1094,10 @@ CREATE TABLE payer_company_code (
 CREATE INDEX ON payer_company_code (payer_id);
 CREATE INDEX ON payer_company_code (accounting_clerk_user_id);
 
+-- Phase 2 scope (ADR-0035) — vendor and its 3 child tables below
+-- (vendor_company_code, vendor_purchasing_org, vendor_bank_account) are
+-- kept as already-designed DDL, not deployed/migrated as part of Phase 1.
+--
 -- SAP LFA1-equivalent (General Data). Company-code-specific and
 -- purchasing-org-specific data are split out below (vendor_company_code /
 -- vendor_purchasing_org), mirroring the payer/payer_company_code/

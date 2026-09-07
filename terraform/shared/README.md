@@ -5,6 +5,19 @@ everything in `modules/` assume already exists: Cognito, the 2 per-backend
 inbound REST APIs, the shared authorizer wiring, the internal NLB, Java's
 separate outbound extraction infrastructure, and the inventory writer.
 
+**Built per [ADR-0033](../../docs/adr/0033-public-portal-support-app-exposure.md)**:
+`public_apps.tf` stands up S3+CloudFront+ACM hosting (via `modules/spa-hosting`)
+for both `react-external-app` and `react-support-app`, all three environments,
+public internet, no Tailscale. `cognito.tf`'s `node-api` resource server now
+also carries `node.portal.<env>`/`node.support.<env>` alongside the existing
+`node.invoke.<env>` M2M scope, and `public_apps_cognito.tf` gives each app
+its own public (Authorization Code+PKCE) app client per environment. The
+shared Lambda authorizer accepts all three scopes now (`modules/lambda-authorizer`),
+and path-scoping — so a `portal`-scoped token can't reach `support`-only/
+M2M-only routes — is enforced downstream in `AIARAP-node-backend`'s
+`ScopeGuard` (that authorizer's own README explains why the split sits
+there rather than in this Lambda). See ADR-0033 and parking lot #55.
+
 ## The core design: 2 inbound REST APIs, N stages
 
 There's one REST API per **inbound backend** (`node`, `sap`), not per
@@ -66,6 +79,16 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
   secret per provisioned SAP environment — doesn't fit
   `tenant-onboarding` (that's shaped for external Tenants on
   `aiarap.com`), so it's wired directly here instead.
+- **`public_apps.tf`** (`modules/spa-hosting`, ADR-0033): one S3 bucket +
+  CloudFront distribution + ACM cert per environment, per app, for
+  `react-external-app` (`{env}.portal.aiarap.com`) and `react-support-app`
+  (`{env}.support.aiarap.com`) — `prd` is the bare subdomain, same convention
+  as everything else in this file.
+- **`public_apps_cognito.tf`** (ADR-0033): one public (no-secret,
+  Authorization Code + PKCE) Cognito app client per app per environment — 6
+  total — each restricted to exactly its own new scope
+  (`node.portal.<env>`/`node.support.<env>`, declared alongside
+  `node.invoke.<env>` on `aws_cognito_resource_server.node` in `cognito.tf`).
 
 ## Required inputs you'll need to supply — nothing here has a silently-guessed default for account-specific values
 
@@ -74,6 +97,7 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
 | `private_subnet_ids` | Not documented anywhere available to this session |
 | `sap_proxy_instance_id` | Genuinely your call — reuse `aws-subnet-router` or stand up a new box |
 | `varunerpsolutions_com_zone_id` | Route53 zone ID, account-specific |
+| `aiarap_com_zone_id` | Route53 zone ID for `aiarap.com` — same zone `tenant-onboarding` already assumes exists, account-specific |
 | `aiarap_db_instance_identifier`, `aiarap_db_name`, `aiarap_db_secret_arn` | RDS specifics not in INFRASTRUCTURE_REFERENCE.md |
 
 `node_environments` defaults to `dev`+`qa` pointed at the existing

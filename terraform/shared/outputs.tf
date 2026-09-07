@@ -46,3 +46,21 @@ output "flow2_secret_arns" {
     for env in local.flow2_envs : env => aws_secretsmanager_secret.varunerp_sf_sap[env].arn
   }
 }
+
+output "portal_app_hosting" {
+  description = "react-external-app's S3 bucket/CloudFront distribution per environment — feed bucket_names/distribution_ids into whatever CI pipeline eventually replaces the image-build+SSM-deploy path (docker/README.md, ADR-0033)."
+  value = {
+    bucket_names     = module.portal_app.bucket_names
+    distribution_ids = module.portal_app.distribution_ids
+    domain_names     = module.portal_app.domain_names
+  }
+}
+
+output "support_app_hosting" {
+  description = "react-support-app's S3 bucket/CloudFront distribution per environment — same shape as portal_app_hosting above."
+  value = {
+    bucket_names     = module.support_app.bucket_names
+    distribution_ids = module.support_app.distribution_ids
+    domain_names     = module.support_app.domain_names
+  }
+}

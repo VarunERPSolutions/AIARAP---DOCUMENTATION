@@ -92,6 +92,11 @@ variable "varunerpsolutions_com_zone_id" {
   type        = string
 }
 
+variable "aiarap_com_zone_id" {
+  description = "Route53 hosted zone ID for aiarap.com — same zone modules/tenant-onboarding uses for per-Tenant domains. Hosts the two public portal apps' domains (public_apps.tf, ADR-0033)."
+  type        = string
+}
+
 # --- Cognito / API Gateway ---
 
 variable "authorizer_reserved_concurrency" {

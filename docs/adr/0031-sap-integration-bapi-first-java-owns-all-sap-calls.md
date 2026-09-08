@@ -1,0 +1,3 @@
+# SAP Integration Technology: BAPI First (OData Second), Java Owns All SAP Integration — Real-Time and Batch
+
+**Superseded by [ADR-0039](0039-sap-integration-technology-and-backend-stack.md).** Originally decided: BAPI first/OData second for every SAP call platform-wide, driven by SAP Digital Access licensing research finding the two licensing-equivalent (ADR-0030); Java becomes the sole SAP integration layer — real-time calls included, not just nightly batch — via a new synchronous internal API NestJS calls into, reopening ADR-0009/0017. Kept here as a historical record — the current, merged decision lives in ADR-0039.

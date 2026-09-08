@@ -4,6 +4,14 @@
 same EC2 box — one per environment — so a dev deploy is structurally
 incapable of touching qa.
 
+**Open item ([ADR-0038](../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md))**:
+the two React apps' section below (Docker/nginx on the shared `react-app`
+EC2 instance, dev-only) is the old model — both apps are moving to
+S3+CloudFront across all three environments, public internet. This
+doc/pipeline hasn't been reworked for that yet (still describes the
+image-build + SSM-deploy path); treat the React portions below as
+dev/legacy until that migration lands.
+
 ## Layout
 
 ```
@@ -54,7 +62,7 @@ reserved for their future `qa` environments, not yet created.
 registers them directly, since node-app receives inbound Tenant/Salesforce
 calls.
 
-**java-app's** host ports are *not* NLB targets. Per ADR-0017, Java/Spring
+**java-app's** host ports are *not* NLB targets. Per ADR-0039, Java/Spring
 Batch is a nightly outbound-only worker (it calls out to each Tenant's SAP
 system; it never receives inbound calls) — there's no Tenant-facing API,
 Cognito scope, or NLB listener for it at all (see

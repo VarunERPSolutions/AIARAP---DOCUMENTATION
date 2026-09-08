@@ -1,5 +1,5 @@
 output "api_ids" {
-  description = "Feed this straight into tenants/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs. No \"java\" entry — Java has no inbound API (ADR-0017); see java_outbound.tf."
+  description = "Feed this straight into tenants/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs. No \"java\" entry — Java has no inbound API (ADR-0039); see java_outbound.tf."
   value = {
     node = aws_api_gateway_rest_api.this["node"].id
   }
@@ -44,5 +44,23 @@ output "flow2_secret_arns" {
   description = "Secrets Manager ARN per provisioned SAP environment, holding VarunERP's own Salesforce->SAP OAuth credentials."
   value = {
     for env in local.flow2_envs : env => aws_secretsmanager_secret.varunerp_sf_sap[env].arn
+  }
+}
+
+output "portal_app_hosting" {
+  description = "react-external-app's S3 bucket/CloudFront distribution per environment — feed bucket_names/distribution_ids into whatever CI pipeline eventually replaces the image-build+SSM-deploy path (docker/README.md, ADR-0038)."
+  value = {
+    bucket_names     = module.portal_app.bucket_names
+    distribution_ids = module.portal_app.distribution_ids
+    domain_names     = module.portal_app.domain_names
+  }
+}
+
+output "support_app_hosting" {
+  description = "react-support-app's S3 bucket/CloudFront distribution per environment — same shape as portal_app_hosting above."
+  value = {
+    bucket_names     = module.support_app.bucket_names
+    distribution_ids = module.support_app.distribution_ids
+    domain_names     = module.support_app.domain_names
   }
 }

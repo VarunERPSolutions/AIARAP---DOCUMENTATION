@@ -20,7 +20,7 @@ A new, separate **Card Payment Threshold Alert** job (NestJS, daily) queries `ca
 
 ## Job tier: Spring Batch, not NestJS
 
-Per [ADR-0017](0017-sap-batch-extraction-java-spring-batch.md)'s tiering rubric (NestJS for frequent/incremental/lightweight work, Java + Spring Batch for heavy work needing chunk/checkpoint/restart), this job goes to **Spring Batch** — an exception to its per-invoice volume being lower than the nightly bulk SAP extraction job that originally justified that tier. The deciding factor is money movement: a mid-run crash must never double-charge an Invoice on restart, and Spring Batch's chunk/checkpoint/restart machinery is exactly the guarantee needed here, ahead of raw throughput.
+Per [ADR-0039](0039-sap-integration-technology-and-backend-stack.md)'s tiering rubric (NestJS for frequent/incremental/lightweight work, Java + Spring Batch for heavy work needing chunk/checkpoint/restart), this job goes to **Spring Batch** — an exception to its per-invoice volume being lower than the nightly bulk SAP extraction job that originally justified that tier. The deciding factor is money movement: a mid-run crash must never double-charge an Invoice on restart, and Spring Batch's chunk/checkpoint/restart machinery is exactly the guarantee needed here, ahead of raw throughput.
 
 ## Success path
 

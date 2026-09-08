@@ -59,6 +59,8 @@ resource "aws_cognito_resource_server" "node" {
   name         = "node-api"
   user_pool_id = aws_cognito_user_pool.shared.id
 
+  # M2M (client_credentials) — Tenant Salesforce/SAP calling in, see
+  # modules/tenant-onboarding. No human ever holds one of these tokens.
   scope {
     scope_name        = "node.invoke.dev"
     scope_description = "Invoke Node API — dev"
@@ -70,6 +72,35 @@ resource "aws_cognito_resource_server" "node" {
   scope {
     scope_name        = "node.invoke.prd"
     scope_description = "Invoke Node API — prd"
+  }
+
+  # Human login (Authorization Code + PKCE via Hosted UI), ADR-0038 —
+  # react-external-app and react-support-app, see public_apps_cognito.tf.
+  # Mutually exclusive from node.invoke.<env> above and from each other: a
+  # portal-scoped token was never issued the support scope or vice versa.
+  scope {
+    scope_name        = "node.portal.dev"
+    scope_description = "Portal login (Payer/Vendor/Tenant User) — dev"
+  }
+  scope {
+    scope_name        = "node.portal.qa"
+    scope_description = "Portal login (Payer/Vendor/Tenant User) — qa"
+  }
+  scope {
+    scope_name        = "node.portal.prd"
+    scope_description = "Portal login (Payer/Vendor/Tenant User) — prd"
+  }
+  scope {
+    scope_name        = "node.support.dev"
+    scope_description = "Support login (AIARAP staff) — dev"
+  }
+  scope {
+    scope_name        = "node.support.qa"
+    scope_description = "Support login (AIARAP staff) — qa"
+  }
+  scope {
+    scope_name        = "node.support.prd"
+    scope_description = "Support login (AIARAP staff) — prd"
   }
 }
 

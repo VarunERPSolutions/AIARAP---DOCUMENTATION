@@ -25,7 +25,7 @@ variable "private_subnet_ids" {
 # real instance ID (unlike this placeholder) is what makes it safe to apply.
 #
 # No java_environments here — Java has no inbound Tenant-facing routing
-# at all (ADR-0017). See java_outbound.tf for its actual infrastructure.
+# at all (ADR-0039). See java_outbound.tf for its actual infrastructure.
 
 variable "node_environments" {
   description = "Map of environment -> { instance_id, port } for node-app. `port` is used as both the NLB listener port and the target port on that instance."
@@ -43,7 +43,7 @@ variable "node_environments" {
 # --- Java backend (outbound only — see java_outbound.tf) ---
 
 variable "java_app_instance_id" {
-  description = "EC2 instance running the Java/Spring Batch nightly SAP extraction service (ADR-0017). Purely for reference/tagging in this stack — this Terraform doesn't manage its IAM instance role (never has), so java_outbound.tf's IAM policy is created standalone with its ARN as an output; attach it to that instance's role yourself, or pass its role name in if you want this stack to attach it directly."
+  description = "EC2 instance running the Java/Spring Batch nightly SAP extraction service (ADR-0039). Purely for reference/tagging in this stack — this Terraform doesn't manage its IAM instance role (never has), so java_outbound.tf's IAM policy is created standalone with its ARN as an output; attach it to that instance's role yourself, or pass its role name in if you want this stack to attach it directly."
   type        = string
   default     = "i-01afdc2668e71f05b" # per INFRASTRUCTURE_REFERENCE.md
 }
@@ -89,6 +89,11 @@ variable "sap_environments" {
 
 variable "varunerpsolutions_com_zone_id" {
   description = "Route53 hosted zone ID for varunerpsolutions.com (hosts the Cognito auth domain and the public SAP API domains)."
+  type        = string
+}
+
+variable "aiarap_com_zone_id" {
+  description = "Route53 hosted zone ID for aiarap.com — same zone modules/tenant-onboarding uses for per-Tenant domains. Hosts the two public portal apps' domains (public_apps.tf, ADR-0038)."
   type        = string
 }
 

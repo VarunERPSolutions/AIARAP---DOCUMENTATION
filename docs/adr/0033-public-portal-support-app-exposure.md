@@ -1,0 +1,3 @@
+# Public Portal & Support App Exposure: CloudFront+S3, Tailscale Narrowed to Developer/Infra Access Only
+
+**Superseded by [ADR-0038](0038-portal-support-app-public-exposure-domain-cognito-and-signup.md).** Originally decided: both `react-external-app` and `react-support-app` go public-internet-reachable across every environment via S3+CloudFront+ACM, reusing the existing Node REST API/Lambda authorizer with two new Cognito scopes (`node.portal.<env>`, `node.support.<env>`) alongside the existing M2M `node.invoke.<env>`; Tailscale narrows to developer/infra access only. Kept here as a historical record — the current, merged decision (including the later per-Tenant domain/Cognito-pool reopening and the full self-registration design) lives in ADR-0038.

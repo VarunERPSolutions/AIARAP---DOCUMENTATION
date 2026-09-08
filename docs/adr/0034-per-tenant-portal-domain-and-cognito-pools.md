@@ -1,0 +1,3 @@
+# Portal Domain & Cognito Reopened: Per-Tenant-Branded Domain, One Cognito User Pool Per Environment
+
+**Superseded by [ADR-0038](0038-portal-support-app-public-exposure-domain-cognito-and-signup.md).** Originally decided: reopens ADR-0033's domain/Cognito-pool decisions for `react-external-app` only — per-Tenant-branded portal hostname (`{subdomain}dev.aiarap.com` / `{subdomain}qa.aiarap.com` / `app.{subdomain}.aiarap.com`) instead of one shared `portal.aiarap.com`, and 3 Cognito pools split by environment (not per-Tenant, not shared) instead of the single `varunerp-integration-pool`; `react-support-app` unaffected. Kept here as a historical record — the current, merged decision lives in ADR-0038.

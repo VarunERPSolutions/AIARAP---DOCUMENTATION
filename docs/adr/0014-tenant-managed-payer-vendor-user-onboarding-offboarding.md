@@ -1,5 +1,7 @@
 # Tenant-Managed Payer/Vendor User Onboarding & Offboarding
 
+**Phase 1 scope note ([ADR-0035](0035-ap-functionality-moved-to-phase-2.md))**: this ADR's mechanics apply equally to Payer and Vendor, but Vendor-side onboarding/offboarding is Phase 2 alongside the rest of AP — there's no Phase 1 feature for a Vendor User to reach. Read every "Payer/Vendor" below as **Payer-only for Phase 1**; the design is unchanged and applies to Vendor once AP ships.
+
 Tenant Users can onboard and offboard Payer/Vendor Users, one at a time or in bulk via Excel upload — with different rules for each direction.
 
 ## Onboarding: stays within the existing Access Request flow

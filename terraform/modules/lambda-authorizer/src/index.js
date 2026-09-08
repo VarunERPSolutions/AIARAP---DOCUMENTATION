@@ -49,15 +49,29 @@ exports.handler = async (event) => {
       return deny(event, "unrecognized stage");
     }
 
-    const requiredScope = `${backend}.invoke.${stage}`;
+    // Three purposes can call a given backend+stage: "invoke" (M2M,
+    // client_credentials — Tenant Salesforce/SAP) and, per ADR-0038,
+    // "portal" (Payer/Vendor/Tenant User login) and "support" (AIARAP
+    // staff login), both Authorization Code + PKCE. Any one of the three
+    // is sufficient to pass THIS gate — it only answers "is this token
+    // valid for this backend+stage at all," not "which routes can it
+    // reach." That finer-grained, purpose-specific routing (a portal token
+    // must not reach support-only or M2M-only endpoints) is intentionally
+    // NOT decided here: this authorizer returns a stage-wide policy by
+    // design (see the policy() comment below), so per-route enforcement
+    // has to live in NestJS's own guards, reading the same scope claim
+    // this function already extracted into context.scope — not yet built
+    // (open item, ADR-0038/parking lot #55).
+    const PURPOSES = ["invoke", "portal", "support"];
+    const acceptableScopes = PURPOSES.map((p) => `${backend}.${p}.${stage}`);
     const grantedScopes = (claims.scope || "").split(" ").filter(Boolean);
-    const hasScope = grantedScopes.some(
-      (s) => s === requiredScope || s.endsWith(`/${requiredScope}`)
+    const matchedScope = acceptableScopes.find((required) =>
+      grantedScopes.some((s) => s === required || s.endsWith(`/${required}`))
     );
 
-    if (!hasScope) {
+    if (!matchedScope) {
       console.error(
-        `[${requestId}] client "${claims.client_id}" missing scope "${requiredScope}" ` +
+        `[${requestId}] client "${claims.client_id}" missing any of [${acceptableScopes.join(", ")}] ` +
           `(has: ${grantedScopes.join(", ") || "none"})`
       );
       return deny(event, "insufficient scope", claims.client_id);
@@ -67,7 +81,8 @@ exports.handler = async (event) => {
       clientId: claims.client_id,
       backend,
       environment: stage,
-      scope: requiredScope,
+      scope: matchedScope,
+      purpose: matchedScope.split(".")[1],
     });
   } catch (err) {
     console.error(`[${requestId}] authorizer error: ${err.stack || err.message}`);

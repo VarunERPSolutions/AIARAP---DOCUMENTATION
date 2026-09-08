@@ -2,7 +2,7 @@
 
 Sequencing for [docs/spec/0001-ar-ap-phase-1.md](../spec/0001-ar-ap-phase-1.md). Each milestone is meant to be independently shippable/demoable, building on what came before rather than requiring the whole phase to land at once.
 
-**Confirmed**: AR (cash collection) is built before AP (payables), since the Problem Statement leads with "accelerate cash collection" and AR has no dependency on the more complex dynamic approval matrix. This ordering is now settled, not an open assumption — see [ADR-0021's Parking Lot](../adr/0021-parking-lot.md), item 11.
+**AP moved to Phase 2 in its entirety** — [ADR-0035](../adr/0035-ap-functionality-moved-to-phase-2.md) — not just sequenced after AR within this phase. This build plan below is now AR/cross-cutting only; Milestones 5–7 (the old AP work) have moved to a "Phase 2" section at the bottom, kept for reference rather than deleted. This supersedes this doc's earlier "AR before AP" framing (originally settled via [ADR-0021's Parking Lot](../adr/0021-parking-lot.md), item 11) — that framing assumed AP was still Phase 1 work, just built second.
 
 ## Milestone 0 — Foundation
 
@@ -11,14 +11,16 @@ Nothing else can be built or demoed without this.
 - AWS account/infra baseline: VPC, RDS Postgres instance, deployment pipeline ([ADR-0005](../adr/0005-aws-as-default-cloud-provider.md)).
 - Schema-per-tenant provisioning tooling: script/process to create a new Tenant's schema plus the shared `global` schema ([ADR-0004](../adr/0004-schema-per-tenant-isolation.md)).
 - AWS Cognito integration for authentication; Tenant SSO/IdP federation as a configurable option ([ADR-0006](../adr/0006-identity-platform-aws-cognito-with-tenant-sso-option.md)).
-- Core domain entities: Tenant, User, Contact, Access Request, Payer, Vendor (base records, no business logic yet).
+- Core domain entities: Tenant, User, Contact, Access Request, Payer (base records, no business logic yet). `Vendor` moved to Phase 2 alongside the rest of AP ([ADR-0035](../adr/0035-ap-functionality-moved-to-phase-2.md)) — no Phase 1 feature reaches it.
 - Custom fields infrastructure: `custom_fields JSONB` column + `tenant_custom_field_definitions` table, applied to the first entity that needs it ([ADR-0003](../adr/0003-custom-fields-via-jsonb.md)).
 - SAP Integration Adapter seam stood up (even if only one extraction call wired end-to-end) — this is the seam the Testing Decisions section identifies as highest-leverage, so get it real early rather than mocked everywhere.
 
 ## Milestone 1 — Access & Identity
 
-- Access Request flow: self-service signup (email domain match) or invite → Payer/Vendor Admin approval → User + Contact created together.
-- Payer Admin / Vendor Admin permissions (approve/deny requests, manage own Users).
+Payer-only for Phase 1 — Vendor-side Access Request/Admin mechanics (ADR-0014/0015/0016) move to Phase 2 with the rest of AP ([ADR-0035](../adr/0035-ap-functionality-moved-to-phase-2.md)); same designs, just not built against Vendor yet.
+
+- Access Request flow: self-service signup (email domain match) or invite → Payer Admin approval → User + Contact created together.
+- Payer Admin permissions (approve/deny requests, manage own Users).
 - Per-Tenant branded portal subdomain.
 
 ## Milestone 2 — AR Core (Invoice-to-Cash)
@@ -40,13 +42,24 @@ Nothing else can be built or demoed without this.
 
 ## Milestone 4 — Tasks, Notifications & Customer Representative
 
-Pulled ahead of AP because Customer Representative (the `global` schema entity) and Task assignment are cross-cutting — useful once any Tenant-facing work exists, not just AP.
+Cross-cutting — useful once any Tenant-facing work exists, not specific to AP. (Originally framed as "pulled ahead of AP" — that framing predates ADR-0035; kept ahead of everything else regardless, since it's genuinely cross-cutting Phase 1 work now, not just relative to AP.)
 
 - Customer Representative entity (`global` schema) + per-Tenant assignment table.
 - Task creation/assignment (Tenant User or Customer Representative, exactly one assignee), subtasks, email-interaction capture.
 - Notification Channel interface + Email implementation ([spec: Task/notification delivery](../spec/0001-ar-ap-phase-1.md)).
 
-## Milestone 5 — AP Bill Flow
+## Cutting across every milestone
+
+- Testing seams (SAP/Salesforce Adapter, Payment Provider, Textract) built as fixtures alongside the first milestone that exercises them, not retrofitted later.
+- Custom fields extended to each entity as it's built, not all at once up front.
+
+## Phase 2 (deferred in its entirety — [ADR-0035](../adr/0035-ap-functionality-moved-to-phase-2.md))
+
+Everything below was Milestones 5–7 of this Phase 1 plan until ADR-0035 moved all AP scope out. Kept here as forward-reference planning, not deleted — renumber/reactivate when AP work actually resumes; don't treat the milestone numbers below as still slotting into the Phase 1 sequence above.
+
+Also deferred here, resolved as part of the same ADR: **Vendor-side Access Request/Admin bootstrap/User termination** (ADR-0014/0015/0016) — no Phase 1 feature for a Vendor User to reach, so build it alongside the AP work below, not ahead of it. Same designs as Milestone 1's Payer-only flows, just applied to Vendor once this section starts.
+
+### AP Bill Flow
 
 - SAP Vendor extraction; Vendor banking details capture (Routing No, Account, SWIFT, Currency, Country, IFSC, IBAN).
 - Bill capture: email + Textract, or Excel upload; held pending.
@@ -56,7 +69,7 @@ Pulled ahead of AP because Customer Representative (the `global` schema entity) 
 
 **Demoable at this point**: a Vendor submits a Bill, it routes to the right approver(s) automatically, and a fully-approved Bill lands in SAP.
 
-## Milestone 6 — RFQ / Procurement Flow
+### RFQ / Procurement Flow
 
 - RFQ creation (copied from SAP) and distribution to Vendor Contacts (email, no login) or in-portal for logged-in Vendors.
 - RFQ response capture (Textract or direct entry): unit price, quantity, lead time, MOQ, scale-based pricing (tier table).
@@ -65,16 +78,7 @@ Pulled ahead of AP because Customer Representative (the `global` schema entity) 
 - Purchase Requisition approval stays in SAP's native workflow (no platform build needed here beyond visibility).
 - Purchase Order visibility: extraction (header, items, schedule lines, address), PDF/Excel export.
 
-## Milestone 7 — ASN & Labels
+### ASN & Labels
 
 - ASN submission for Vendors without EDI (API, Excel, manual entry) → Inbound Delivery in SAP.
 - Label printing: ZPL file generation (direct Zebra) and BarTender-compatible XML/CSV generation, one fixed default template per label type (shipping, product).
-
-## Cutting across every milestone
-
-- Testing seams (SAP/Salesforce Adapter, Payment Provider, Textract) built as fixtures alongside the first milestone that exercises them, not retrofitted later.
-- Custom fields extended to each entity as it's built, not all at once up front.
-
-## Open question before starting
-
-Confirm the AR-before-AP ordering assumption above — if a specific Tenant's rollout needs AP first, Milestones 3–5 should be resequenced ahead of Milestone 2.

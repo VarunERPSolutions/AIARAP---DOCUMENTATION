@@ -1,0 +1,10 @@
+{
+  "name": "varunerp-api-authorizer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API Gateway REQUEST authorizer: validates Cognito access tokens and enforces per-backend-per-environment scope.",
+  "main": "index.js",
+  "dependencies": {
+    "aws-jwt-verify": "^4.0.1"
+  }
+}

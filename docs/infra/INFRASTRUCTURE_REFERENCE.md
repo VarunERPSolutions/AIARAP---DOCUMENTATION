@@ -38,19 +38,6 @@ instance.
 | Postgres RDS "aiarap" | (RDS, not EC2) | db instance | — (172.31.84.146:5432) | n/a — reached via router | — |
 | Windows RD instance | `i-00b9b28f85d23f6a4` | m6i.xlarge | — | n/a | **stopped**, not part of Tailscale setup |
 
-**App server VPC/subnet placement** (confirmed live via `aws ec2 describe-instances`,
-2026-09-07): all three sit in the single default VPC (`vpc-072f816875fedf904`) —
-no cross-VPC networking involved, so an API Gateway VPC Link only needs to
-attach to this one VPC's subnets to reach all three.
-
-| Node | AZ | Subnet |
-|---|---|---|
-| java-app | us-east-1b | `subnet-04995cb5d11ee98b1` |
-| node-app | us-east-1a | `subnet-06f5722306035b874` |
-| react-app | us-east-1a | `subnet-06f5722306035b874` |
-
-node-app and react-app share the same subnet.
-
 **SAP system details**: sap-hana runs the combined S/4HANA ABAP+DB stack (SID `S4H`,
 dispatcher port 3200, hostname `sid-hdb-s4h`). sap-ads runs NetWeaver AS Java +
 Adobe Document Services (hostname `sid-j2e`).

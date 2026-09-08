@@ -33,19 +33,6 @@ if [ "$ENV" = "qa" ]; then
   export "${VAR_NAME}=${TAG}"
 fi
 
-# Refresh ECR auth on every deploy — the token expires after 12h and this
-# box has no other login mechanism (see TailscaleSSMRole's ecr:GetAuthorizationToken grant).
-aws ecr get-login-password --region us-east-1 \
-  | docker login --username AWS --password-stdin 043207749006.dkr.ecr.us-east-1.amazonaws.com
-
-# Explicit project name — compose otherwise infers it from the cwd's
-# basename, which is just "dev"/"qa" for every app (each app's directory is
-# docker/<app>/<env>). Two apps sharing a box (react-external-app and
-# react-support-app both currently do) would then collide on the same
-# implicit project name, and `--remove-orphans` on one app's deploy would
-# tear down the other's container as an "orphan".
-COMPOSE_PROJECT="${APP}-${ENV}"
-
-docker compose -p "$COMPOSE_PROJECT" pull
-docker compose -p "$COMPOSE_PROJECT" up -d --remove-orphans
+docker compose pull
+docker compose up -d --remove-orphans
 docker image prune -f

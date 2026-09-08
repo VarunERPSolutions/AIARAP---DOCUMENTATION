@@ -1,11 +1,9 @@
-# Inputs for the dev CI/CD pipeline (ci.tf) only. Each is the EC2 instance
-# that app's dev container(s) run on — used solely to scope the GitHub
-# Actions IAM role's ssm:SendCommand permission to exactly those 3 boxes.
+# --- Networking ---
 
-variable "node_app_instance_id" {
-  description = "EC2 instance running node-app's dev container."
+variable "vpc_id" {
+  description = "VarunERP's VPC."
   type        = string
-  default     = "i-0e8bb91b84754d419" # per INFRASTRUCTURE_REFERENCE.md
+  default     = "vpc-072f816875fedf904" # per INFRASTRUCTURE_REFERENCE.md
 }
 
 variable "private_subnet_ids" {
@@ -45,32 +43,36 @@ variable "node_environments" {
 # --- Java backend (outbound only — see java_outbound.tf) ---
 
 variable "java_app_instance_id" {
-  description = "EC2 instance running the Java/Spring Batch nightly SAP extraction service (ADR-0039). Purely for reference/tagging in this stack — this Terraform doesn't manage its IAM instance role (never has). Not part of gateway_network.tf's VPC Link — Java has no Tenant-facing inbound routing (ADR-0039)."
+  description = "EC2 instance running the Java/Spring Batch nightly SAP extraction service (ADR-0039). Purely for reference/tagging in this stack — this Terraform doesn't manage its IAM instance role (never has), so java_outbound.tf's IAM policy is created standalone with its ARN as an output; attach it to that instance's role yourself, or pass its role name in if you want this stack to attach it directly."
   type        = string
   default     = "i-01afdc2668e71f05b" # per INFRASTRUCTURE_REFERENCE.md
 }
 
+variable "java_app_iam_role_name" {
+  description = "IAM role name attached to java_app_instance_id, if you want java_outbound.tf's policy attached automatically. Leave null to just get the policy ARN as an output and attach it yourself."
+  type        = string
+  default     = null
+}
+
+variable "tenant_sap_secret_arn_pattern" {
+  description = "Resource pattern (with wildcards) matching every Tenant's SAP credential secrets — tenant_settings.sap_credential_secret_ref / sap_oauth_token_secret_ref in the app's own schema (docs/schema/0001-phase-1-table-structures.md). Default is a reasonable guess at the naming convention, NOT confirmed against whatever the app's secret-creation code actually uses — verify before relying on it."
+  type        = string
+  default     = "arn:aws:secretsmanager:*:*:secret:aiarap/tenant/*/sap-*"
+}
+
+# --- React frontends (CI deploy target only — not otherwise routed by this stack) ---
+
 variable "react_app_instance_id" {
-  description = "EC2 instance running both React apps' dev containers (external-app, support-app share this box — see docker/README.md)."
+  description = "EC2 instance running both React apps' dev containers (external-app, support-app share this box — see docker/README.md). Used only to scope the GitHub Actions CI role's ssm:SendCommand permission (ci.tf); this stack doesn't otherwise manage react-app's infrastructure."
   type        = string
   default     = "i-0404b22a0807d70b3" # per INFRASTRUCTURE_REFERENCE.md
 }
 
-# Inputs for gateway_network.tf (internal NLB + VPC Link, ADR-0003's gateway
-# reaching the backends). All three app instances confirmed live in this one
-# default VPC via `aws ec2 describe-instances`, 2026-09-07 — see
-# INFRASTRUCTURE_REFERENCE.md §2.
+# --- SAP backend ---
 
-variable "vpc_id" {
-  description = "The single default VPC all three app instances live in."
+variable "sap_proxy_instance_id" {
+  description = "EC2 instance that bridges VPC-private traffic into the Tailscale overlay to reach SAP (nginx/socat forwarding each environment's port below to the matching SAP HANA instance's Tailscale address — that forwarding config is outside this Terraform). Either aws-subnet-router repurposed, or a new dedicated box — your call, not assumed here."
   type        = string
-  default     = "vpc-072f816875fedf904"
-}
-
-variable "app_server_subnet_ids" {
-  description = "Subnets the internal NLB and API Gateway VPC Link span (node-app/react-app's AZ, us-east-1a, plus java-app's AZ, us-east-1b, for multi-AZ coverage — java-app itself isn't a VPC Link target, per ADR-0039)."
-  type        = list(string)
-  default     = ["subnet-04995cb5d11ee98b1", "subnet-06f5722306035b874"]
 }
 
 variable "sap_environments" {

@@ -41,6 +41,48 @@ project's own ADRs/schema docs.
    and publish to that queue — matching Java's actual role as a nightly
    *outbound* extraction worker, not an inbound API.
 
+## Restored from merge-varunerp-network-infra (Sep 2026)
+
+The Tenant integration hub stack described in §11 of
+`INFRASTRUCTURE_REFERENCE.md` (Cognito, the 2 REST APIs, the shared Lambda
+authorizer, the internal NLB, Java's outbound infra, the Postgres inventory
+writer) had been deleted from `main`'s `terraform/` tree by an unrelated
+commit (`c73584b`, "Replace terraform/ with docs/java-app-deployment-and-
+gateway-network's exact tree") before the S3+CloudFront portal/support work
+in this same `docs/infra/` tree began — leaving only the ADR/diagram
+documentation for it, no actual Terraform. Restored from the
+`merge-varunerp-network-infra` branch (author: Ravi Babu Koduri), with two
+deliberate exclusions:
+
+- **`terraform/modules/spa-hosting/` and `public_apps_cognito.tf`** — the
+  branch's own design for react-external-app/react-support-app hosting,
+  superseded by the S3+CloudFront+WAF design already live in
+  `public_apps.tf`/`public_apps_domain.tf`/etc. Restoring both would create
+  two competing Terraform designs for the same CloudFront distributions.
+  `outputs.tf`'s `portal_app_hosting`/`support_app_hosting` outputs (which
+  referenced that module) were dropped for the same reason —
+  `spa_bucket_names`/`spa_distribution_ids`/`spa_distribution_domain_names`
+  already cover the same information.
+- **`terraform/customers/*`/`react_app_instance_id`** — already superseded
+  on `main` (renamed to `terraform/tenants/*` upstream; `react_app_instance_id`
+  removed entirely once that EC2 instance was terminated, parking lot #57).
+
+Everything else (Cognito, `apis.tf`, `authorizer.tf`, `networking.tf`,
+`domains_sap.tf`, `flow2.tf`, `inventory.tf`, `java_outbound.tf`, the
+`lambda-authorizer`/`pg-inventory-writer`/`tenant-onboarding` modules,
+`terraform/tenants/`) was restored as-is. `variables.tf` was merged (not
+replaced) to keep the currently-live variables (`vpc_id`,
+`app_server_subnet_ids`, etc.) alongside the newly-restored ones.
+**Still not appliable** — several required variables have no value yet
+(`private_subnet_ids`, `sap_proxy_instance_id`, `varunerpsolutions_com_zone_id`,
+`aiarap_com_zone_id`, the `aiarap_db_*` variables) — confirmed via
+`terraform validate` (passes) and `terraform plan` (fails cleanly asking for
+exactly those, touches no real state). One naming note:
+`aiarap_com_zone_id` assumes a Route53 zone for `aiarap.com` that doesn't
+actually exist in this account (confirmed when `public_apps_domain.tf` was
+built — DNS is externally managed at Hostinger) — reconcile before this
+stack is actually adopted.
+
 ## Still open / not built
 
 - **`var.tenant_sap_secret_arn_pattern`** (`shared/variables.tf`) is a

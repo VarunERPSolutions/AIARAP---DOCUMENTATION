@@ -244,12 +244,23 @@ dev/qa/prd are *stages* of that one API, each with its own NLB
 listener/target and a `gwPort` stage variable driving where the integration
 forwards.
 
-**Java is outbound-only** (ADR-0039): a nightly batch worker that calls out
-to each Tenant's SAP system to extract data, publishing a "batch complete"
-SQS event NestJS consumes — it never receives an inbound call, so it has no
-REST API, Cognito scope, or NLB listener. `terraform/shared/java_outbound.tf`
-provisions the SQS queue and the IAM policy for reading Tenant SAP
-credentials.
+**Java has no external-facing API** (ADR-0039): no REST API, Cognito scope,
+or NLB listener — a Tenant or any other outside caller can never reach it,
+directly or via API Gateway. It has two roles, both reachable only from
+inside AIARAP's own VPC:
+- **Nightly batch** (the original role): a Spring Batch worker that calls
+  out to each Tenant's SAP system to extract data, publishing a "batch
+  complete" SQS event NestJS consumes. `terraform/shared/java_outbound.tf`
+  provisions the SQS queue and the IAM policy for reading Tenant SAP
+  credentials.
+- **Real-time synchronous calls** (added by ADR-0039 §4, e.g. ADR-0029's
+  checkout-time pricing simulation and Sales Order creation): NestJS calls
+  a synchronous internal API Java exposes (Spring Boot MVC/WebFlux),
+  which executes the BAPI/RFC (or OData fallback) call against SAP and
+  returns inline. So Java *does* receive inbound calls now — just only
+  from NestJS, never from a Tenant, API Gateway, or any public caller.
+  Business logic/orchestration/retry still lives in NestJS; Java stays a
+  thin execution layer either way.
 
 **Outstanding before this can actually be applied**:
 - `node` prod instance isn't provisioned — `terraform/shared` currently

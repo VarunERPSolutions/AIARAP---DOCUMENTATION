@@ -1,5 +1,5 @@
 output "api_ids" {
-  description = "Feed this straight into tenants/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs. No \"java\" entry — Java has no inbound API (ADR-0017); see java_outbound.tf."
+  description = "Feed this straight into tenants/variables.tf's api_ids. One ID per backend — dev/qa/prd are stages of it, not separate APIs. No \"java\" entry — Java has no inbound API (ADR-0039); see java_outbound.tf."
   value = {
     node = aws_api_gateway_rest_api.this["node"].id
   }

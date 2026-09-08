@@ -122,7 +122,7 @@
 <body>
 
 <h1>VarunERP — Access &amp; Integration Architecture</h1>
-<p class="subtitle">Five views of the same VPC: how developers/infra-admins reach internal AWS servers over Tailscale (narrowed to exactly that, ADR-0038), how Tenant systems reach AIARAP's public inbound APIs, how AIARAP's own Java service both extracts nightly and now also handles real-time SAP calls (ADR-0031), a worked request/response example, and how Payers/Vendors/Tenant Users/AIARAP support staff reach the portal apps themselves over the public internet (ADR-0038). Updated Sep 2026, shown for two example Tenants.</p>
+<p class="subtitle">Five views of the same VPC: how developers/infra-admins reach internal AWS servers over Tailscale (narrowed to exactly that, ADR-0038), how Tenant systems reach AIARAP's public inbound APIs, how AIARAP's own Java service both extracts nightly and now also handles real-time SAP calls (ADR-0039), a worked request/response example, and how Payers/Vendors/Tenant Users/AIARAP support staff reach the portal apps themselves over the public internet (ADR-0038). Updated Sep 2026, shown for two example Tenants.</p>
 
 <h2>1 — Developer &amp; infra-admin access via Tailscale</h2>
 <p class="section-note">Every server-level connection — SSH for a code deploy/debug session, or admin access to SAP HANA/ADS/Postgres RDS — goes through an authenticated WireGuard tunnel, scoped by ACL group; no server accepts direct public connections. This is deliberately narrower than it used to cover (<a href="../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md">ADR-0038</a>): reaching the portal apps themselves — as a Payer, Vendor, Tenant User, or AIARAP support staff member — no longer goes through Tailscale at all, in any environment. See Figure 5.</p>
@@ -337,7 +337,7 @@
   <line class="conn" x1="890" y1="170" x2="980" y2="205" marker-end="url(#arrow2)"/>
   <line class="conn" x1="890" y1="245" x2="980" y2="225" marker-end="url(#arrow2)"/>
 
-  <!-- Backends — node-app only. Java is not a backend here (ADR-0017), see
+  <!-- Backends — node-app only. Java is not a backend here (ADR-0039), see
        Figure 3 for its outbound infrastructure. -->
   <rect class="box" x="1230" y="140" width="210" height="60" rx="6"/>
   <text x="1246" y="164" class="title-text">node-app instance</text>
@@ -393,13 +393,13 @@
   <li><strong>Per-connection isolation:</strong> every Tenant gets its own Cognito app client and API key per backend per environment — a leaked credential for one Tenant's connection can't be replayed against another Tenant's data.</li>
   <li><strong>Prod is the bare subdomain:</strong> <code>{subdomain}.aiarap.com</code> = prod, <code>dev.{subdomain}.aiarap.com</code>/<code>qa.{subdomain}.aiarap.com</code> = non-prod — same convention on the SAP side (<code>sap-api.varunerpsolutions.com</code> vs <code>dev.sap-api.varunerpsolutions.com</code>). Each environment is its own API Gateway custom domain object now (not an apex+wildcard pair) since dev/qa route to different stages — a wildcard domain can't pick a stage based on which subdomain was hit.</li>
   <li><strong>Not the same hostnames as Figure 1:</strong> the SAP API domains above are new, genuinely public endpoints — deliberately distinct from <code>sapdev.varunerpsolutions.com</code>, which resolves to an unroutable Tailscale address and stays internal-only.</li>
-  <li><strong>No Java here:</strong> the original design had a customer-facing <code>java-api</code>, on the assumption a Tenant's SAP called Java directly — never built. Per ADR-0017/0031, Java is now the sole SAP integration layer platform-wide (nightly batch <em>and</em> real-time BAPI/RFC calls), but every path into it originates from AIARAP's own NestJS service, never from a Tenant or any other external caller — see Figure 3.</li>
+  <li><strong>No Java here:</strong> the original design had a customer-facing <code>java-api</code>, on the assumption a Tenant's SAP called Java directly — never built. Per ADR-0039, Java is now the sole SAP integration layer platform-wide (nightly batch <em>and</em> real-time BAPI/RFC calls), but every path into it originates from AIARAP's own NestJS service, never from a Tenant or any other external caller — see Figure 3.</li>
   <li><strong>Also not here: human login.</strong> This figure's <code>node.invoke.&lt;env&gt;</code> scope is <code>client_credentials</code> only — no person ever holds one of these tokens. Portal/support human login uses two new, separate scopes (<code>node.portal.&lt;env&gt;</code>, <code>node.support.&lt;env&gt;</code>) on this same Node API, added by ADR-0038 — see Figure 5.</li>
   <li class="planned-text"><strong>Open item:</strong> SAP prod and node prod (HANA instance / dedicated EC2 instance, plus — for SAP — the tailnet-proxy forwarding rule) aren't provisioned yet — everything marked planned/faded above activates once each real instance ID replaces its placeholder.</li>
 </ul>
 
 <h2>3 — Java: SAP integration layer (nightly batch + real-time)</h2>
-<p class="section-note">Java is now the <strong>sole SAP integration layer platform-wide</strong> (<a href="../../docs/adr/0031-sap-integration-bapi-first-java-owns-all-sap-calls.md">ADR-0031</a>), owning two separate mechanisms shown together below. The nightly batch (<a href="../../docs/adr/0017-sap-batch-extraction-java-spring-batch.md">ADR-0017</a>, bottom) still runs on a schedule with no inbound call at all — it extracts Invoices/Bills/RFQs/POs and hands off to NestJS over SQS. Alongside it, Java now also exposes a <strong>synchronous internal API</strong> (Spring Boot MVC/WebFlux, top) that NestJS calls for live SAP needs — starting with <a href="../../docs/adr/0029-sales-order-checkout-fi-down-payment.md">ADR-0029</a>'s checkout-time pricing simulation and Sales Order creation. Both paths default to BAPI/RFC via SAP's JCo connector (OData as a per-call fallback, ADR-0031 Decision 1), and both are reachable only from inside AIARAP's own VPC — no Cognito, no API Gateway, no NLB listener, no Tenant or public caller either way.</p>
+<p class="section-note">Java is now the <strong>sole SAP integration layer platform-wide</strong> (<a href="../../docs/adr/0039-sap-integration-technology-and-backend-stack.md">ADR-0039</a>), owning two separate mechanisms shown together below. The nightly batch (bottom) still runs on a schedule with no inbound call at all — it extracts Invoices/Bills/RFQs/POs and hands off to NestJS over SQS. Alongside it, Java now also exposes a <strong>synchronous internal API</strong> (Spring Boot MVC/WebFlux, top) that NestJS calls for live SAP needs — starting with <a href="../../docs/adr/0029-sales-order-checkout-fi-down-payment.md">ADR-0029</a>'s checkout-time pricing simulation and Sales Order creation. Both paths default to BAPI/RFC via SAP's JCo connector (OData as a per-call fallback), and both are reachable only from inside AIARAP's own VPC — no Cognito, no API Gateway, no NLB listener, no Tenant or public caller either way.</p>
 
 <figure>
 <div class="diagram-scroll">
@@ -413,7 +413,7 @@
     </marker>
   </defs>
 
-  <!-- Real-time path (ADR-0031) -->
+  <!-- Real-time path (ADR-0039) -->
   <rect class="box" x="40" y="40" width="240" height="60" rx="6"/>
   <text x="56" y="64" class="title-text">Secrets Manager</text>
   <text x="56" y="82" class="sub-text">Tenant SAP credentials — both paths</text>
@@ -430,8 +430,8 @@
 
   <rect class="box-varunerp" x="380" y="80" width="300" height="160" rx="7"/>
   <text x="396" y="104" class="title-text">Java Service</text>
-  <text x="396" y="122" class="sub-text">Spring Batch — nightly (ADR-0017)</text>
-  <text x="396" y="138" class="sub-text">+ Spring Boot sync API (ADR-0031)</text>
+  <text x="396" y="122" class="sub-text">Spring Batch — nightly (ADR-0039)</text>
+  <text x="396" y="138" class="sub-text">+ Spring Boot sync API (ADR-0039)</text>
   <text x="396" y="154" class="sub-text">sole SAP integration layer</text>
   <text x="396" y="170" class="sub-text">BAPI/RFC via JCo — OData fallback</text>
   <text x="396" y="186" class="sub-text">reachable only from inside the VPC</text>
@@ -452,7 +452,7 @@
   <text x="800" y="580" text-anchor="middle" class="flow-label-sync">③ result: pricing / order confirmation</text>
   <text x="800" y="594" text-anchor="middle" class="flow-label-sync">(synchronous — same call chain, reversed)</text>
 
-  <!-- Nightly batch path (ADR-0017), unchanged in shape -->
+  <!-- Nightly batch path (ADR-0039), unchanged in shape -->
   <text x="545" y="330" class="flow-label">writes extracted rows</text>
   <text x="545" y="344" class="flow-label">(batch only)</text>
   <line class="conn" x1="530" y1="240" x2="530" y2="440" marker-end="url(#arrow3)"/>
@@ -482,11 +482,11 @@
   <text x="1276" y="496" class="sub-text">Sales Order...</text>
 </svg>
 </div>
-<figcaption>Java authenticates outbound using each Tenant's own SAP credential (<code>tenant_settings.sap_credential_secret_ref</code>/<code>sap_oauth_token_secret_ref</code> — never a raw value in Postgres, only the Secrets Manager reference) for both paths. The <strong>nightly batch</strong> (bottom) writes extracted rows into that Tenant's own staging tables (never straight into Invoice/Bill/RFQ/PO), then publishes one "batch complete" event per Tenant/entity/run; NestJS consumes it and applies custom-fields JSONB mapping, validation, and audit-trail writes (ADR-0003) when promoting staged rows into real domain tables. The <strong>real-time path</strong> (top) skips staging entirely — NestJS calls Java synchronously, Java executes the BAPI (e.g. <code>BAPI_SALESORDER_SIMULATE</code>, <code>BAPI_SALESORDER_CREATEFROMDAT2</code>) directly against the Tenant's SAP system and returns the result inline. Either way, business logic — orchestration, retry/backoff, failure escalation — stays single-sourced in NestJS; Java is a thin execution layer, never the place SAP-calling decisions get made (ADR-0031).</figcaption>
+<figcaption>Java authenticates outbound using each Tenant's own SAP credential (<code>tenant_settings.sap_credential_secret_ref</code>/<code>sap_oauth_token_secret_ref</code> — never a raw value in Postgres, only the Secrets Manager reference) for both paths. The <strong>nightly batch</strong> (bottom) writes extracted rows into that Tenant's own staging tables (never straight into Invoice/Bill/RFQ/PO), then publishes one "batch complete" event per Tenant/entity/run; NestJS consumes it and applies custom-fields JSONB mapping, validation, and audit-trail writes (ADR-0003) when promoting staged rows into real domain tables. The <strong>real-time path</strong> (top) skips staging entirely — NestJS calls Java synchronously, Java executes the BAPI (e.g. <code>BAPI_SALESORDER_SIMULATE</code>, <code>BAPI_SALESORDER_CREATEFROMDAT2</code>) directly against the Tenant's SAP system and returns the result inline. Either way, business logic — orchestration, retry/backoff, failure escalation — stays single-sourced in NestJS; Java is a thin execution layer, never the place SAP-calling decisions get made (ADR-0039).</figcaption>
 </figure>
 
 <h2>4 — Example: three calls to add two numbers</h2>
-<p class="section-note">Same toy contract on all three routes — <code>POST .../add</code> with <code>{"a": 2, "b": 3}</code>, expecting <code>{"sum": 5}</code> back — so the only thing that varies below is which environment/stage the call reaches and by which path. Each example shows the request at four points: as the caller sends it, what the Lambda authorizer decides, what reaches the NLB, and what the NLB forwards on. All three land on Figure 2's inbound path — Java (Figure 3) isn't walked through the same way here: its real-time calls do have a request/response shape now (ADR-0031), but they're internal-only (NestJS→Java→SAP), never Cognito/API-Gateway-mediated like these three.</p>
+<p class="section-note">Same toy contract on all three routes — <code>POST .../add</code> with <code>{"a": 2, "b": 3}</code>, expecting <code>{"sum": 5}</code> back — so the only thing that varies below is which environment/stage the call reaches and by which path. Each example shows the request at four points: as the caller sends it, what the Lambda authorizer decides, what reaches the NLB, and what the NLB forwards on. All three land on Figure 2's inbound path — Java (Figure 3) isn't walked through the same way here: its real-time calls do have a request/response shape now (ADR-0039), but they're internal-only (NestJS→Java→SAP), never Cognito/API-Gateway-mediated like these three.</p>
 
 <div class="walkthrough">
 

@@ -28,7 +28,7 @@ Gateway per-request from whichever stage handled the call. One deployment
 per backend (resources/methods/integrations are identical across its
 environments); the stages are what differ.
 
-**Java is not one of these two.** Per [ADR-0017](../../docs/adr/0017-sap-batch-extraction-java-spring-batch.md),
+**Java is not one of these two.** Per [ADR-0039](../../docs/adr/0039-sap-integration-technology-and-backend-stack.md),
 Java/Spring Batch is a nightly **outbound-only** worker — it calls out to
 each Tenant's SAP system to extract data, it never receives an inbound
 call. It has no REST API, no Cognito scope, no NLB listener. Its

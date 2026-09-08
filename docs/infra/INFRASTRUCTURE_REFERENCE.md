@@ -215,7 +215,7 @@ dev/qa/prd are *stages* of that one API, each with its own NLB
 listener/target and a `gwPort` stage variable driving where the integration
 forwards.
 
-**Java is outbound-only** (ADR-0017): a nightly batch worker that calls out
+**Java is outbound-only** (ADR-0039): a nightly batch worker that calls out
 to each Tenant's SAP system to extract data, publishing a "batch complete"
 SQS event NestJS consumes — it never receives an inbound call, so it has no
 REST API, Cognito scope, or NLB listener. `terraform/shared/java_outbound.tf`

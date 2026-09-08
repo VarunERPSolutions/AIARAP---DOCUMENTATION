@@ -1,4 +1,4 @@
-# Java's actual role per ADR-0017: a nightly OUTBOUND batch worker, not an
+# Java's actual role per ADR-0039: a nightly OUTBOUND batch worker, not an
 # inbound API. It calls out to each Tenant's SAP system to extract
 # Invoices/Bills/RFQs/POs into staging tables, then hands off to NestJS via
 # SQS — it never receives a call from outside AIARAP, so unlike node/sap
@@ -32,7 +32,7 @@ resource "aws_sqs_queue" "batch_complete" {
 
 resource "aws_iam_policy" "java_outbound" {
   name        = "aiarap-java-outbound-extraction"
-  description = "Lets the Java/Spring Batch nightly extraction service (ADR-0017) read Tenant SAP credentials and publish batch-complete events."
+  description = "Lets the Java/Spring Batch nightly extraction service (ADR-0039) read Tenant SAP credentials and publish batch-complete events."
 
   policy = jsonencode({
     Version = "2012-10-17"

@@ -8,7 +8,7 @@ once per Tenant from a single list — keyed by `subdomain`, the same value
 as `global.tenant_registry.subdomain` in the app's own schema.
 
 Java is **not** part of this module — see `shared/java_outbound.tf` and its
-header comment. Per [ADR-0017](../docs/adr/0017-sap-batch-extraction-java-spring-batch.md),
+header comment. Per [ADR-0039](../docs/adr/0039-sap-integration-technology-and-backend-stack.md),
 Java/Spring Batch is a nightly outbound-only worker (it calls out to each
 Tenant's SAP system; it never receives an inbound call), so it has no
 Tenant-facing API, Cognito scope, or per-Tenant onboarding step at all.

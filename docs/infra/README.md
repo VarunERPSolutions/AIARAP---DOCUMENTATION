@@ -32,7 +32,7 @@ project's own ADRs/schema docs.
    app, not this Lambda, and FK'ing into it would create a migration-
    ordering dependency between two separately-deployed projects. Same
    natural key (`subdomain`), so a manual join/audit is still trivial.
-3. **Java's role (ADR-0017/0022)** ✅ resolved. Removed: the customer-facing
+3. **Java's role (ADR-0039/0022)** ✅ resolved. Removed: the customer-facing
    `java-api` REST API, its Cognito resource server/scopes, its NLB
    listeners, the `sap-java` connection type. Added (`shared/java_outbound.tf`):
    an SQS queue for Java's "batch complete" handoff to NestJS, and an IAM

@@ -3,7 +3,7 @@
 # integration forwards. This is what keeps the API/authorizer count low
 # instead of ballooning to one-per-environment.
 #
-# Java is deliberately NOT a backend here. Per ADR-0017, Java/Spring Batch
+# Java is deliberately NOT a backend here. Per ADR-0039, Java/Spring Batch
 # is scoped exclusively to nightly OUTBOUND extraction (AIARAP calling out
 # to each Tenant's SAP system) — it never receives inbound calls, so it has
 # no Tenant-facing REST API, Cognito scope, or NLB listener. Its

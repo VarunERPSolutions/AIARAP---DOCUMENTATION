@@ -1,6 +1,6 @@
 # VarunERP — AWS + Tailscale Infrastructure Reference
 
-Last updated: 2026-09-03
+Last updated: 2026-09-08
 Companion visual: `architecture-diagram.html` (same folder) — Figure 1 covers
 sections 1–9 below (developer/infra-admin access, narrowed by
 [ADR-0038](../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md) — see that note
@@ -34,9 +34,16 @@ instance.
 | aws-subnet-router | `i-05fe2fea51b661923` | t3.micro, Amazon Linux 2023 | 100.112.124.74 | tag:infra | — |
 | java-app | `i-01afdc2668e71f05b` | t4g.medium (arm64), 30GB gp3 | 100.88.251.5 | tag:app-servers | javadev.aiarap.com |
 | node-app | `i-0e8bb91b84754d419` | t4g.small (arm64), 20GB gp3 | 100.82.12.99 | tag:app-servers | nodedev.aiarap.com |
-| react-app | `i-0404b22a0807d70b3` | t4g.small (arm64), 20GB gp3 | 100.70.39.7 | tag:frontend | reactdev.aiarap.com |
 | Postgres RDS "aiarap" | (RDS, not EC2) | db instance | — (172.31.84.146:5432) | n/a — reached via router | — |
 | Windows RD instance | `i-00b9b28f85d23f6a4` | m6i.xlarge | — | n/a | **stopped**, not part of Tailscale setup |
+
+**react-app** (`i-0404b22a0807d70b3`, was tag:frontend / reactdev.aiarap.com) is
+**decommissioned and terminated** (2026-09-08) — `react-external-app`/
+`react-support-app` moved to S3+CloudFront (see §11a below, parking lot
+#56/#57). Terraform no longer references this instance (`ci.tf`,
+`gateway_network.tf`, `variables.tf`). Still manual/outstanding: remove its
+Tailscale ACL tag/device entry (§6/§7 below still list it) and delete the
+`reactdev.aiarap.com` DNS record (§8) — neither is Terraform-managed.
 
 **SAP system details**: sap-hana runs the combined S/4HANA ABAP+DB stack (SID `S4H`,
 dispatcher port 3200, hostname `sid-hdb-s4h`). sap-ads runs NetWeaver AS Java +
@@ -184,6 +191,28 @@ Estimated for java-app/node-app/react-app running ~12–14 hrs/day (not 24/7):
 Note: EBS storage bills 24/7 regardless of instance uptime; only compute scales
 with the on/off schedule. Running all three 24/7 instead would cost ~$60–65/month.
 
+## 11a. Public portal/support app hosting (S3 + CloudFront)
+
+Per [ADR-0038](../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md),
+`react-external-app`/`react-support-app` no longer run on the `react-app` EC2
+instance at all. `terraform/shared/public_apps.tf` provisions, dev only so far:
+
+- one private S3 bucket per app, reachable only via CloudFront's Origin
+  Access Control (no public bucket access, no website-hosting endpoint)
+- one CloudFront distribution per app, default `*.cloudfront.net` domain
+  (no custom hostname/ACM cert yet — per-Tenant aliasing, parking lot #60,
+  isn't designed)
+- SPA client-side routing via CloudFront custom error responses (403/404 →
+  `/index.html`, 200), replacing nginx's old `try_files $uri /index.html`
+- IAM permissions on the existing `github-actions-ci` role (`ci.tf`) to
+  `s3 sync` and `cloudfront create-invalidation`, scoped to just these
+  buckets/distributions
+
+Each app's `deploy-dev.yml` now runs `npm run build` → `aws s3 sync ./dist
+s3://<bucket> --delete` → `aws cloudfront create-invalidation --paths "/*"` —
+no Docker image, no ECR repo, no SSM command. See parking lot #56 (qa/prod
+still open) and #57 (EC2 decommission).
+
 ## 11. Tenant Integration Hub (Cognito + API Gateway)
 
 A separate system from everything above — sections 1–9 are about *employees*
@@ -237,6 +266,10 @@ credentials.
 
 ## 12. Outstanding / TODO
 
+- [ ] `react-app` EC2 instance (`i-0404b22a0807d70b3`) is terminated — still
+      need to remove its Tailscale ACL tag/device entry (§6/§7) and its
+      `reactdev.aiarap.com` DNS record (§8), neither of which is
+      Terraform-managed (see §11a, parking lot #57)
 - [ ] Confirm the ACL policy update (tag:sap-servers split) has been saved and
       device tags applied (section 6)
 - [ ] Set up an automated start/stop schedule (AWS Instance Scheduler or an

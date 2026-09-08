@@ -7,6 +7,10 @@
 # `deploy.sh <app> qa <tag>` command, not something this role can trigger.
 
 locals {
+  # All 4 app repos assume this one CI role via OIDC — kept as a single list
+  # even though react-external-app/react-support-app no longer build a
+  # Docker image or deploy via SSM (see public_apps.tf): they still need
+  # this role's S3 sync / CloudFront invalidation permissions.
   ci_repos = {
     "node-app"           = "VarunERPSolutions/AIARAP-node-backend"
     "java-app"           = "VarunERPSolutions/AIARAP-spring-backend"
@@ -26,17 +30,24 @@ locals {
     "react-support-app"  = "VarunERPSolutions@291509345/AIARAP-support-app@1353662817"
   }
 
+  # Repos that still build a Docker image and deploy it onto an EC2 instance
+  # via ECR + SSM. react-external-app/react-support-app moved to S3+CloudFront
+  # (public_apps.tf) — the react-app EC2 instance they used to share is being
+  # decommissioned, so they're deliberately absent from both maps below.
+  ecr_ssm_repos = {
+    "node-app" = "VarunERPSolutions/AIARAP-node-backend"
+    "java-app" = "VarunERPSolutions/AIARAP-spring-backend"
+  }
+
   # instance_id per app that the CI role is allowed to ssm:SendCommand against.
   ci_deploy_instance_ids = {
-    "node-app"           = var.node_app_instance_id
-    "java-app"           = var.java_app_instance_id
-    "react-external-app" = var.react_app_instance_id
-    "react-support-app"  = var.react_app_instance_id
+    "node-app" = var.node_app_instance_id
+    "java-app" = var.java_app_instance_id
   }
 }
 
 resource "aws_ecr_repository" "app" {
-  for_each             = local.ci_repos
+  for_each             = local.ecr_ssm_repos
   name                 = "varunerp/${each.key}"
   image_tag_mutability = "MUTABLE" # :dev is a floating tag by design
 

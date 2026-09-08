@@ -4,13 +4,15 @@
 same EC2 box — one per environment — so a dev deploy is structurally
 incapable of touching qa.
 
-**Open item ([ADR-0038](../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md))**:
-the two React apps' section below (Docker/nginx on the shared `react-app`
-EC2 instance, dev-only) is the old model — both apps are moving to
-S3+CloudFront across all three environments, public internet. This
-doc/pipeline hasn't been reworked for that yet (still describes the
-image-build + SSM-deploy path); treat the React portions below as
-dev/legacy until that migration lands.
+**`react-external-app`/`react-support-app` are no longer part of this
+Docker/EC2 layout.** Per [ADR-0038](../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md),
+both apps now build to static assets in CI and deploy straight to
+S3+CloudFront (`terraform/shared/public_apps.tf`, dev environment so far —
+see [parking lot #56](../docs/adr/0021-parking-lot.md)); each repo's
+`.github/workflows/deploy-dev.yml` runs `npm run build` + `aws s3 sync` +
+a CloudFront invalidation, no Docker image involved. The shared `react-app`
+EC2 instance these two used to deploy onto is being decommissioned
+([parking lot #57](../docs/adr/0021-parking-lot.md)).
 
 ## Layout
 
@@ -20,20 +22,10 @@ docker/
 ├── node-app/
 │   ├── dev/  { docker-compose.yml, .env.example }
 │   └── qa/   { docker-compose.yml, .env.example }
-├── java-app/
-│   ├── dev/  { docker-compose.yml, .env.example }
-│   └── qa/   { docker-compose.yml, .env.example }
-├── react-external-app/
-│   └── dev/  { docker-compose.yml }
-└── react-support-app/
-    └── dev/  { docker-compose.yml }
+└── java-app/
+    ├── dev/  { docker-compose.yml, .env.example }
+    └── qa/   { docker-compose.yml, .env.example }
 ```
-
-The two React apps are static nginx builds — no `.env`/`.env.secrets`
-(anything they need is baked in at `npm run build` time, see each repo's
-`Dockerfile`), and no `qa/` yet — CI only drives the `dev` branch today (see
-the repos' `.github/workflows/deploy-dev.yml`); qa promotion for them is a
-deliberate follow-up, same as it already is for node-app/java-app.
 
 Each `docker-compose.yml` is a **separate compose project** — its own
 directory, its own container name, its own Docker network. There is
@@ -51,12 +43,6 @@ directory first — `deploy.sh` does exactly that and nothing else.
 | node-app | qa | 3000 | 3002 |
 | java-app | dev | 8080 | 4001 |
 | java-app | qa | 8080 | 4002 |
-| react-external-app | dev | 80 | 8081 |
-| react-support-app | dev | 80 | 8083 |
-
-Both React apps' dev containers share the `react-app` EC2 instance (see
-`docs/infra/INFRASTRUCTURE_REFERENCE.md` §2) — host ports 8082/8084 are
-reserved for their future `qa` environments, not yet created.
 
 **node-app's** host ports are NLB `target_port`s — `terraform/shared`
 registers them directly, since node-app receives inbound Tenant/Salesforce

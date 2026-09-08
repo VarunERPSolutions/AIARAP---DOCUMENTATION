@@ -14,11 +14,9 @@ variable "java_app_instance_id" {
   default     = "i-01afdc2668e71f05b" # per INFRASTRUCTURE_REFERENCE.md
 }
 
-variable "react_app_instance_id" {
-  description = "EC2 instance running both React apps' dev containers (external-app, support-app share this box — see docker/README.md)."
-  type        = string
-  default     = "i-0404b22a0807d70b3" # per INFRASTRUCTURE_REFERENCE.md
-}
+# react_app_instance_id (i-0404b22a0807d70b3) removed: react-external-app/
+# react-support-app moved to S3+CloudFront (public_apps.tf) and the shared
+# react-app EC2 instance is being decommissioned — see docs/adr/0021-parking-lot.md #57.
 
 # Inputs for gateway_network.tf (internal NLB + VPC Link, ADR-0003's gateway
 # reaching the backends). All three app instances confirmed live in this one
@@ -32,7 +30,7 @@ variable "vpc_id" {
 }
 
 variable "app_server_subnet_ids" {
-  description = "Subnets the app instances live in — java-app's (us-east-1b) and node-app/react-app's shared one (us-east-1a). The internal NLB and the VPC Link both need to span these two."
+  description = "Subnets the app instances live in — java-app's (us-east-1b) and node-app's (us-east-1a). The internal NLB and the VPC Link both need to span these two."
   type        = list(string)
   default     = ["subnet-04995cb5d11ee98b1", "subnet-06f5722306035b874"]
 }

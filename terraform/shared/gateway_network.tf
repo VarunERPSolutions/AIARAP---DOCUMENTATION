@@ -1,7 +1,9 @@
 # Internal NLB + VPC Link so the future API Gateway (ADR-0003) can reach
-# java-app/node-app/react-app without those instances becoming directly
-# reachable — satisfies ADR-0005's "backends unreachable except through the
-# gateway" requirement.
+# java-app/node-app without those instances becoming directly reachable —
+# satisfies ADR-0005's "backends unreachable except through the gateway"
+# requirement. react-app was removed once react-external-app/react-support-app
+# moved to S3+CloudFront (public_apps.tf) — a browser reaches those directly
+# via CloudFront, never through this gateway.
 #
 # Deliberately does NOT touch `sg-0dfb6d3af8165709a` (the existing
 # hand-created app-servers SG, not Terraform-managed) — a new SG is created
@@ -49,11 +51,14 @@ resource "aws_security_group" "gateway_backend_access" {
 locals {
   # port -> which target group's traffic it represents, used to generate
   # both the ingress rules and the NLB listeners/target groups below.
+  #
+  # react_external/react_support were removed here once those two apps moved
+  # to S3+CloudFront (public_apps.tf) and the shared react-app EC2 instance
+  # was decommissioned — they were never reached through this gateway's NLB
+  # from the browser side anyway; a browser hits CloudFront directly.
   backend_ports = {
-    java_app       = 4001
-    node_app       = 3001
-    react_external = 8081
-    react_support  = 8083
+    java_app = 4001
+    node_app = 3001
   }
 }
 
@@ -78,10 +83,6 @@ data "aws_instance" "node_app" {
   instance_id = var.node_app_instance_id
 }
 
-data "aws_instance" "react_app" {
-  instance_id = var.react_app_instance_id
-}
-
 resource "aws_network_interface_sg_attachment" "java_app" {
   security_group_id    = aws_security_group.gateway_backend_access.id
   network_interface_id = data.aws_instance.java_app.network_interface_id
@@ -90,11 +91,6 @@ resource "aws_network_interface_sg_attachment" "java_app" {
 resource "aws_network_interface_sg_attachment" "node_app" {
   security_group_id    = aws_security_group.gateway_backend_access.id
   network_interface_id = data.aws_instance.node_app.network_interface_id
-}
-
-resource "aws_network_interface_sg_attachment" "react_app" {
-  security_group_id    = aws_security_group.gateway_backend_access.id
-  network_interface_id = data.aws_instance.react_app.network_interface_id
 }
 
 # --- Internal NLB -----------------------------------------------------------
@@ -110,8 +106,7 @@ resource "aws_lb" "backend" {
   }
 }
 
-# --- Target groups (one per backend port; react-app gets two — one ---------
-# instance serving both frontends on different host ports) ------------------
+# --- Target groups (one per backend port) -----------------------------------
 
 resource "aws_lb_target_group" "java_app" {
   name        = "tg-java-app"
@@ -145,38 +140,6 @@ resource "aws_lb_target_group" "node_app" {
   }
 }
 
-resource "aws_lb_target_group" "react_external" {
-  name        = "tg-react-external"
-  port        = local.backend_ports.react_external
-  protocol    = "TCP"
-  target_type = "instance"
-  vpc_id      = var.vpc_id
-
-  preserve_client_ip = true
-
-  health_check {
-    protocol = "HTTP"
-    path     = "/health"
-    port     = "traffic-port"
-  }
-}
-
-resource "aws_lb_target_group" "react_support" {
-  name        = "tg-react-support"
-  port        = local.backend_ports.react_support
-  protocol    = "TCP"
-  target_type = "instance"
-  vpc_id      = var.vpc_id
-
-  preserve_client_ip = true
-
-  health_check {
-    protocol = "HTTP"
-    path     = "/health"
-    port     = "traffic-port"
-  }
-}
-
 resource "aws_lb_target_group_attachment" "java_app" {
   target_group_arn = aws_lb_target_group.java_app.arn
   target_id        = var.java_app_instance_id
@@ -187,18 +150,6 @@ resource "aws_lb_target_group_attachment" "node_app" {
   target_group_arn = aws_lb_target_group.node_app.arn
   target_id        = var.node_app_instance_id
   port             = local.backend_ports.node_app
-}
-
-resource "aws_lb_target_group_attachment" "react_external" {
-  target_group_arn = aws_lb_target_group.react_external.arn
-  target_id        = var.react_app_instance_id
-  port             = local.backend_ports.react_external
-}
-
-resource "aws_lb_target_group_attachment" "react_support" {
-  target_group_arn = aws_lb_target_group.react_support.arn
-  target_id        = var.react_app_instance_id
-  port             = local.backend_ports.react_support
 }
 
 # --- NLB listeners (one per port, TCP passthrough to matching target group)-
@@ -222,28 +173,6 @@ resource "aws_lb_listener" "node_app" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.node_app.arn
-  }
-}
-
-resource "aws_lb_listener" "react_external" {
-  load_balancer_arn = aws_lb.backend.arn
-  port              = local.backend_ports.react_external
-  protocol          = "TCP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.react_external.arn
-  }
-}
-
-resource "aws_lb_listener" "react_support" {
-  load_balancer_arn = aws_lb.backend.arn
-  port              = local.backend_ports.react_support
-  protocol          = "TCP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.react_support.arn
   }
 }
 
@@ -277,9 +206,7 @@ output "gateway_vpc_link_id" {
 output "gateway_nlb_listener_arns" {
   description = "One per backend port — the integration_uri target for each route."
   value = {
-    java_app       = aws_lb_listener.java_app.arn
-    node_app       = aws_lb_listener.node_app.arn
-    react_external = aws_lb_listener.react_external.arn
-    react_support  = aws_lb_listener.react_support.arn
+    java_app = aws_lb_listener.java_app.arn
+    node_app = aws_lb_listener.node_app.arn
   }
 }

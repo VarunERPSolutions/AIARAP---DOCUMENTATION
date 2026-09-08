@@ -5,7 +5,7 @@ everything in `modules/` assume already exists: Cognito, the 2 per-backend
 inbound REST APIs, the shared authorizer wiring, the internal NLB, Java's
 separate outbound extraction infrastructure, and the inventory writer.
 
-**Built per [ADR-0033](../../docs/adr/0033-public-portal-support-app-exposure.md)**:
+**Built per [ADR-0038](../../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md)**:
 `public_apps.tf` stands up S3+CloudFront+ACM hosting (via `modules/spa-hosting`)
 for both `react-external-app` and `react-support-app`, all three environments,
 public internet, no Tailscale. `cognito.tf`'s `node-api` resource server now
@@ -16,7 +16,7 @@ shared Lambda authorizer accepts all three scopes now (`modules/lambda-authorize
 and path-scoping — so a `portal`-scoped token can't reach `support`-only/
 M2M-only routes — is enforced downstream in `AIARAP-node-backend`'s
 `ScopeGuard` (that authorizer's own README explains why the split sits
-there rather than in this Lambda). See ADR-0033 and parking lot #55.
+there rather than in this Lambda). See ADR-0038 and parking lot #55.
 
 ## The core design: 2 inbound REST APIs, N stages
 
@@ -79,12 +79,12 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
   secret per provisioned SAP environment — doesn't fit
   `tenant-onboarding` (that's shaped for external Tenants on
   `aiarap.com`), so it's wired directly here instead.
-- **`public_apps.tf`** (`modules/spa-hosting`, ADR-0033): one S3 bucket +
+- **`public_apps.tf`** (`modules/spa-hosting`, ADR-0038): one S3 bucket +
   CloudFront distribution + ACM cert per environment, per app, for
   `react-external-app` (`{env}.portal.aiarap.com`) and `react-support-app`
   (`{env}.support.aiarap.com`) — `prd` is the bare subdomain, same convention
   as everything else in this file.
-- **`public_apps_cognito.tf`** (ADR-0033): one public (no-secret,
+- **`public_apps_cognito.tf`** (ADR-0038): one public (no-secret,
   Authorization Code + PKCE) Cognito app client per app per environment — 6
   total — each restricted to exactly its own new scope
   (`node.portal.<env>`/`node.support.<env>`, declared alongside

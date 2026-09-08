@@ -23,7 +23,7 @@ authorizer at all. Per request, it:
    `<backend>.invoke.<stage>` (M2M, Tenant Salesforce/SAP),
    `<backend>.portal.<stage>` (Payer/Vendor/Tenant User login), or
    `<backend>.support.<stage>` (AIARAP support staff login) — the last two
-   added by [ADR-0033](../../../docs/adr/0033-public-portal-support-app-exposure.md).
+   added by [ADR-0038](../../../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md).
    Allows or denies accordingly, and passes which one matched through as
    `context.purpose` (`invoke`/`portal`/`support`).
 5. Returns an IAM policy wildcarded to `stage/*/*` of the invoking API, not
@@ -44,7 +44,7 @@ token independently rather than trusting this authorizer's decision (the
 API Gateway HTTP_PROXY integration has no request-parameter mapping
 forwarding `context.*` into the backend request, so nothing from this
 function's decision survives into NestJS except the original
-`Authorization` header). See ADR-0033 and parking lot #55 (resolved).
+`Authorization` header). See ADR-0038 and parking lot #55 (resolved).
 
 ## Inputs this module needs from the shared stack
 

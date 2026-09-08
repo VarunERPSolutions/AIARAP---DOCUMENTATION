@@ -1,4 +1,4 @@
-# Cognito app clients for the two public portal apps (ADR-0033) — the
+# Cognito app clients for the two public portal apps (ADR-0038) — the
 # backend auth half of what public_apps.tf's S3/CloudFront/ACM stood up. The
 # two new scopes themselves live on aws_cognito_resource_server.node
 # (cognito.tf), since Cognito requires every scope for a resource server
@@ -46,7 +46,7 @@ resource "aws_cognito_user_pool_client" "public_app" {
   # Convention, not yet confirmed against either app's own router — both
   # React apps are assumed to handle the OAuth redirect at /callback and
   # post-logout at their root. Verify once the apps' actual auth code exists
-  # (open item, ADR-0033/parking lot).
+  # (open item, ADR-0038/parking lot).
   callback_urls = ["https://${each.value.domain}/callback"]
   logout_urls   = ["https://${each.value.domain}/"]
 

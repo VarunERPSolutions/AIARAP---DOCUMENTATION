@@ -4,7 +4,7 @@
 same EC2 box — one per environment — so a dev deploy is structurally
 incapable of touching qa.
 
-**Open item ([ADR-0033](../docs/adr/0033-public-portal-support-app-exposure.md))**:
+**Open item ([ADR-0038](../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md))**:
 the two React apps' section below (Docker/nginx on the shared `react-app`
 EC2 instance, dev-only) is the old model — both apps are moving to
 S3+CloudFront across all three environments, public internet. This

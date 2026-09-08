@@ -122,10 +122,10 @@
 <body>
 
 <h1>VarunERP — Access &amp; Integration Architecture</h1>
-<p class="subtitle">Five views of the same VPC: how developers/infra-admins reach internal AWS servers over Tailscale (narrowed to exactly that, ADR-0033), how Tenant systems reach AIARAP's public inbound APIs, how AIARAP's own Java service both extracts nightly and now also handles real-time SAP calls (ADR-0031), a worked request/response example, and how Payers/Vendors/Tenant Users/AIARAP support staff reach the portal apps themselves over the public internet (ADR-0033). Updated Sep 2026, shown for two example Tenants.</p>
+<p class="subtitle">Five views of the same VPC: how developers/infra-admins reach internal AWS servers over Tailscale (narrowed to exactly that, ADR-0038), how Tenant systems reach AIARAP's public inbound APIs, how AIARAP's own Java service both extracts nightly and now also handles real-time SAP calls (ADR-0031), a worked request/response example, and how Payers/Vendors/Tenant Users/AIARAP support staff reach the portal apps themselves over the public internet (ADR-0038). Updated Sep 2026, shown for two example Tenants.</p>
 
 <h2>1 — Developer &amp; infra-admin access via Tailscale</h2>
-<p class="section-note">Every server-level connection — SSH for a code deploy/debug session, or admin access to SAP HANA/ADS/Postgres RDS — goes through an authenticated WireGuard tunnel, scoped by ACL group; no server accepts direct public connections. This is deliberately narrower than it used to cover (<a href="../adr/0033-public-portal-support-app-exposure.md">ADR-0033</a>): reaching the portal apps themselves — as a Payer, Vendor, Tenant User, or AIARAP support staff member — no longer goes through Tailscale at all, in any environment. See Figure 5.</p>
+<p class="section-note">Every server-level connection — SSH for a code deploy/debug session, or admin access to SAP HANA/ADS/Postgres RDS — goes through an authenticated WireGuard tunnel, scoped by ACL group; no server accepts direct public connections. This is deliberately narrower than it used to cover (<a href="../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md">ADR-0038</a>): reaching the portal apps themselves — as a Payer, Vendor, Tenant User, or AIARAP support staff member — no longer goes through Tailscale at all, in any environment. See Figure 5.</p>
 
 <figure>
 <div class="diagram-scroll">
@@ -231,7 +231,7 @@
   <li><strong>Public exposure removed:</strong> SSH and all SAP service ports were open to <code>0.0.0.0/0</code> on the HANA and ADS instances before this setup; all were revoked.</li>
   <li><strong>DNS records</strong> for the four hostnames above resolve to Tailscale CGNAT addresses (<code>100.64.0.0/10</code>) — safe to publish publicly since they're unreachable off the tailnet.</li>
   <li class="planned-text"><strong>Open item:</strong> <code>group:sap-consultants</code> was meant to grant SAP-only access, but because java-app and node-app share <code>tag:app-servers</code> with sap-ads, nshaik/sshaik currently also reach the dev servers. A separate tag would close this.</li>
-  <li class="planned-text"><strong>Open item (ADR-0033):</strong> <code>group:qa</code> (defined in the ACL, no members yet) becomes vestigial once QA testers reach dev/qa app environments over the public internet (Figure 5) rather than through Tailscale — a candidate for removal rather than ever populating it.</li>
+  <li class="planned-text"><strong>Open item (ADR-0038):</strong> <code>group:qa</code> (defined in the ACL, no members yet) becomes vestigial once QA testers reach dev/qa app environments over the public internet (Figure 5) rather than through Tailscale — a candidate for removal rather than ever populating it.</li>
   <li><strong>reactdev/nodedev/javadev.aiarap.com</strong> (this figure's table) stay developer-facing direct-to-instance hostnames for debugging — not the same URLs a Payer, Vendor, Tenant User, or support-staff member uses to reach the actual apps (Figure 5), and not the same URLs Tenant Salesforce/SAP systems call in on (Figure 2).</li>
 </ul>
 
@@ -394,7 +394,7 @@
   <li><strong>Prod is the bare subdomain:</strong> <code>{subdomain}.aiarap.com</code> = prod, <code>dev.{subdomain}.aiarap.com</code>/<code>qa.{subdomain}.aiarap.com</code> = non-prod — same convention on the SAP side (<code>sap-api.varunerpsolutions.com</code> vs <code>dev.sap-api.varunerpsolutions.com</code>). Each environment is its own API Gateway custom domain object now (not an apex+wildcard pair) since dev/qa route to different stages — a wildcard domain can't pick a stage based on which subdomain was hit.</li>
   <li><strong>Not the same hostnames as Figure 1:</strong> the SAP API domains above are new, genuinely public endpoints — deliberately distinct from <code>sapdev.varunerpsolutions.com</code>, which resolves to an unroutable Tailscale address and stays internal-only.</li>
   <li><strong>No Java here:</strong> the original design had a customer-facing <code>java-api</code>, on the assumption a Tenant's SAP called Java directly — never built. Per ADR-0017/0031, Java is now the sole SAP integration layer platform-wide (nightly batch <em>and</em> real-time BAPI/RFC calls), but every path into it originates from AIARAP's own NestJS service, never from a Tenant or any other external caller — see Figure 3.</li>
-  <li><strong>Also not here: human login.</strong> This figure's <code>node.invoke.&lt;env&gt;</code> scope is <code>client_credentials</code> only — no person ever holds one of these tokens. Portal/support human login uses two new, separate scopes (<code>node.portal.&lt;env&gt;</code>, <code>node.support.&lt;env&gt;</code>) on this same Node API, added by ADR-0033 — see Figure 5.</li>
+  <li><strong>Also not here: human login.</strong> This figure's <code>node.invoke.&lt;env&gt;</code> scope is <code>client_credentials</code> only — no person ever holds one of these tokens. Portal/support human login uses two new, separate scopes (<code>node.portal.&lt;env&gt;</code>, <code>node.support.&lt;env&gt;</code>) on this same Node API, added by ADR-0038 — see Figure 5.</li>
   <li class="planned-text"><strong>Open item:</strong> SAP prod and node prod (HANA instance / dedicated EC2 instance, plus — for SAP — the tailnet-proxy forwarding rule) aren't provisioned yet — everything marked planned/faded above activates once each real instance ID replaces its placeholder.</li>
 </ul>
 
@@ -657,7 +657,7 @@ Content-Type: application/json
 </div>
 
 <h2>5 — Public portal &amp; support access</h2>
-<p class="section-note">Originally designed together in <a href="../adr/0033-public-portal-support-app-exposure.md">ADR-0033</a>: how a Payer, Vendor, or Tenant User reaches the portal (<code>react-external-app</code>), and how AIARAP's own support staff reach their separate tool (<code>react-support-app</code>) — both public internet, both across all three environments, neither ever touching Tailscale. <strong><a href="../adr/0034-per-tenant-portal-domain-and-cognito-pools.md">ADR-0034</a> has since reopened this for <code>react-external-app</code> only</strong> — per-Tenant-branded domain instead of one shared <code>portal.aiarap.com</code>, Cognito split into 3 environment-scoped pools instead of one shared pool. <code>react-support-app</code> is unaffected and still matches this figure exactly as drawn. See Figure 6 for <code>react-external-app</code>'s current, per-Tenant shape end to end.</p>
+<p class="section-note">Designed together, now consolidated in <a href="../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md">ADR-0038</a>: how a Payer, Vendor, or Tenant User reaches the portal (<code>react-external-app</code>), and how AIARAP's own support staff reach their separate tool (<code>react-support-app</code>) — both public internet, both across all three environments, neither ever touching Tailscale. <strong><code>react-external-app</code> was later reopened within that same ADR</strong> — per-Tenant-branded domain instead of one shared <code>portal.aiarap.com</code>, Cognito split into 3 environment-scoped pools instead of one shared pool. <code>react-support-app</code> is unaffected and still matches this figure exactly as drawn. See Figure 6 for <code>react-external-app</code>'s current, per-Tenant shape end to end.</p>
 
 <figure>
 <div class="diagram-scroll">
@@ -727,7 +727,7 @@ Content-Type: application/json
   <text x="1036" y="292" class="sub-text">same authorizer as Figure 2</text>
   <text x="1036" y="308" class="sub-text">checks scope vs apiId + stage</text>
   <text x="1036" y="324" class="sub-text-planned">path-scoping across 3 scopes:</text>
-  <text x="1036" y="338" class="sub-text-planned">open item, ADR-0033</text>
+  <text x="1036" y="338" class="sub-text-planned">open item, ADR-0038</text>
 
   <line class="conn" x1="1140" y1="200" x2="1140" y2="250" marker-end="url(#arrow5)"/>
 
@@ -745,10 +745,10 @@ Content-Type: application/json
   <line class="conn" x1="1140" y1="470" x2="1140" y2="500" marker-end="url(#arrow5)"/>
 </svg>
 </div>
-<figcaption>Both apps authenticate exactly the way a browser SPA has to — Authorization Code + PKCE against Cognito Hosted UI, never <code>client_credentials</code> (a public client can't hold a secret) — then call the Node API directly with the resulting Bearer token, same two-step shape as Figure 2's Tenant callers. The <strong>new work</strong> is entirely two Cognito scopes and their app-client/group wiring; the REST API, Lambda authorizer, NLB, and node-app instance are all the exact same infrastructure Figure 2 already built for Tenant integration, not a parallel stack. Path-level authorization (a portal-scoped token must not reach support-only or M2M-only routes) is resolved downstream by <code>AIARAP-node-backend</code>'s <code>ScopeGuard</code> — see the Lambda authorizer module's own README for why that split sits there rather than in this authorizer. <strong>The portal side of this diagram (the <code>react-external-app</code> CloudFront box and the Cognito Hosted UI box's left-hand path) is superseded by ADR-0034</strong> — Figure 6 draws its current, per-Tenant shape; everything else on this page (including the entire support-app path) is unaffected.</figcaption>
+<figcaption>Both apps authenticate exactly the way a browser SPA has to — Authorization Code + PKCE against Cognito Hosted UI, never <code>client_credentials</code> (a public client can't hold a secret) — then call the Node API directly with the resulting Bearer token, same two-step shape as Figure 2's Tenant callers. The <strong>new work</strong> is entirely two Cognito scopes and their app-client/group wiring; the REST API, Lambda authorizer, NLB, and node-app instance are all the exact same infrastructure Figure 2 already built for Tenant integration, not a parallel stack. Path-level authorization (a portal-scoped token must not reach support-only or M2M-only routes) is resolved downstream by <code>AIARAP-node-backend</code>'s <code>ScopeGuard</code> — see the Lambda authorizer module's own README for why that split sits there rather than in this authorizer. <strong>The portal side of this diagram (the <code>react-external-app</code> CloudFront box and the Cognito Hosted UI box's left-hand path) is superseded by ADR-0038</strong> — Figure 6 draws its current, per-Tenant shape; everything else on this page (including the entire support-app path) is unaffected.</figcaption>
 </figure>
 
-<h2>6 — End to end: a Tenant's Payer logs in and searches Invoices (ADR-0034)</h2>
+<h2>6 — End to end: a Tenant's Payer logs in and searches Invoices (ADR-0038)</h2>
 <p class="section-note">The current, per-Tenant shape of <code>react-external-app</code>'s access path — reopens the portal half of Figure 5. Worked for one example Tenant (<code>acme</code>) across all three of their portal hostnames; every other onboarded Tenant repeats the same pattern against the same 3 environment-scoped Cognito pools and the same shared Node API. <code>react-support-app</code> is untouched by any of this — it's still exactly Figure 5's right-hand path.</p>
 
 <figure>
@@ -834,7 +834,7 @@ Content-Type: application/json
   <text x="1096" y="224" class="title-text">Node API</text>
   <text x="1096" y="242" class="sub-text">same REST API as Figures 2 &amp; 5</text>
   <text x="1096" y="258" class="sub-text">stage = dev (this example)</text>
-  <text x="1096" y="274" class="sub-text">unchanged by ADR-0034</text>
+  <text x="1096" y="274" class="sub-text">unchanged by ADR-0038</text>
 
   <line class="conn" x1="1210" y1="300" x2="1210" y2="330" marker-end="url(#arrow6)"/>
 
@@ -866,7 +866,7 @@ Content-Type: application/json
   <text x="1076" y="730" class="title-text">Invoice search results → SPA renders them</text>
 </svg>
 </div>
-<figcaption>Steps, following the numbers: the Payer picks Tenant <code>acme</code>'s branded hostname for whichever environment they need, which resolves (via that environment's CloudFront distribution and its per-Tenant alias) to the same SPA build every Tenant gets — Tenant identity comes from the hostname, not a different build. ① The SPA sends them to that <em>environment's</em> Cognito pool's Hosted UI — <code>acme</code>'s dev users, <code>globex</code>'s dev users, and every other Tenant's dev users all register/log in against the same <code>portal-dev</code> pool, per <a href="../adr/0034-per-tenant-portal-domain-and-cognito-pools.md">ADR-0034</a>. ② The SPA calls the exact same Node API/Lambda authorizer/NLB/node-app every other figure already uses — ADR-0034 changes nothing about that shared backend path, only how the caller authenticated. ③ Inside NestJS, <code>ScopeGuard</code> still confirms the <code>node.portal.dev</code> scope exactly as Figure 5 describes, but a real deployment also needs a <strong>second</strong> check this diagram calls out as not yet built: confirming the token's Tenant (proposed <code>custom:tenant_subdomain</code> claim) actually matches the invoice data being requested — without it, any Payer in the shared <code>portal-dev</code> pool could query any Tenant's invoices, scope alone doesn't stop that. See ADR-0034's open items.</figcaption>
+<figcaption>Steps, following the numbers: the Payer picks Tenant <code>acme</code>'s branded hostname for whichever environment they need, which resolves (via that environment's CloudFront distribution and its per-Tenant alias) to the same SPA build every Tenant gets — Tenant identity comes from the hostname, not a different build. ① The SPA sends them to that <em>environment's</em> Cognito pool's Hosted UI — <code>acme</code>'s dev users, <code>globex</code>'s dev users, and every other Tenant's dev users all register/log in against the same <code>portal-dev</code> pool, per <a href="../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md">ADR-0038</a>. ② The SPA calls the exact same Node API/Lambda authorizer/NLB/node-app every other figure already uses — ADR-0038 changes nothing about that shared backend path, only how the caller authenticated. ③ Inside NestJS, <code>ScopeGuard</code> still confirms the <code>node.portal.dev</code> scope exactly as Figure 5 describes, but a real deployment also needs a <strong>second</strong> check this diagram calls out as not yet built: confirming the token's Tenant (proposed <code>custom:tenant_subdomain</code> claim) actually matches the invoice data being requested — without it, any Payer in the shared <code>portal-dev</code> pool could query any Tenant's invoices, scope alone doesn't stop that. See ADR-0038's open items.</figcaption>
 </figure>
 
 </body>

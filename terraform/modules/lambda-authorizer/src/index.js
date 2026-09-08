@@ -50,7 +50,7 @@ exports.handler = async (event) => {
     }
 
     // Three purposes can call a given backend+stage: "invoke" (M2M,
-    // client_credentials — Tenant Salesforce/SAP) and, per ADR-0033,
+    // client_credentials — Tenant Salesforce/SAP) and, per ADR-0038,
     // "portal" (Payer/Vendor/Tenant User login) and "support" (AIARAP
     // staff login), both Authorization Code + PKCE. Any one of the three
     // is sufficient to pass THIS gate — it only answers "is this token
@@ -61,7 +61,7 @@ exports.handler = async (event) => {
     // design (see the policy() comment below), so per-route enforcement
     // has to live in NestJS's own guards, reading the same scope claim
     // this function already extracted into context.scope — not yet built
-    // (open item, ADR-0033/parking lot #55).
+    // (open item, ADR-0038/parking lot #55).
     const PURPOSES = ["invoke", "portal", "support"];
     const acceptableScopes = PURPOSES.map((p) => `${backend}.${p}.${stage}`);
     const grantedScopes = (claims.scope || "").split(" ").filter(Boolean);

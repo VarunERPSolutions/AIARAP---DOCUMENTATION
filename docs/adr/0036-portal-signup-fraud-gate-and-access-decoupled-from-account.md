@@ -1,0 +1,3 @@
+# Portal Self-Registration: Pre Sign-up Fraud Gate, and Cognito Account ≠ Portal Access
+
+**Superseded by [ADR-0038](0038-portal-support-app-public-exposure-domain-cognito-and-signup.md).** Originally decided: resolves [parking lot #59](0021-parking-lot.md) — a Pre Sign-up Lambda trigger rejects an unaffiliated portal signup outright (email domain checked against new `payer_email_domain`, scoped to the claimed Tenant), but a Cognito account existing never by itself creates an AIARAP `User` row — that still only happens on Access Request approval (ADR-0014/0015, unchanged). Kept here as a historical record — the current, merged decision (including the full 4-path signup resolution logic) lives in ADR-0038.

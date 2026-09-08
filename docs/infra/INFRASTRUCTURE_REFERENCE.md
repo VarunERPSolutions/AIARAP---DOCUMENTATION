@@ -3,10 +3,10 @@
 Last updated: 2026-09-03
 Companion visual: `architecture-diagram.html` (same folder) — Figure 1 covers
 sections 1–9 below (developer/infra-admin access, narrowed by
-[ADR-0033](../adr/0033-public-portal-support-app-exposure.md) — see that note
+[ADR-0038](../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md) — see that note
 before assuming Tailscale still gates app traffic); Figure 2 covers section 11
 (the Tenant integration hub, machine-to-machine only); Figure 5 covers the
-public portal/support app access ADR-0033 introduced, not yet reflected in
+public portal/support app access ADR-0038 introduced, not yet reflected in
 the sections below.
 
 ## 1. Overview
@@ -14,7 +14,7 @@ the sections below.
 Developers and infra admins reach all AWS-hosted servers through **Tailscale**
 (a WireGuard-based mesh VPN) instead of public IPs — for SSH/deploy access and
 SAP HANA/ADS/RDS admin, not for reaching the portal apps themselves (per
-[ADR-0033](../adr/0033-public-portal-support-app-exposure.md), `react-external-app`
+[ADR-0038](../adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md), `react-external-app`
 and `react-support-app` are both public-internet, all environments — see
 `architecture-diagram.html` Figure 5). Access is scoped per employee via
 Tailscale ACL groups/tags. Two AWS-native services (SAP HANA/ADS via SSH, and RDS)

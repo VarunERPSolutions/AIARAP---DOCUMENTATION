@@ -53,6 +53,34 @@ CREATE TABLE global.tenant_registry (
     updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_by                    UUID
 );
+
+-- Tenant-employee self-registration domain resolution (onboarding revisit,
+-- point 1). A Tenant can plausibly claim more than one legal
+-- employee-email domain (subsidiaries, post-acquisition rebrands) —
+-- mirrors payer_email_domain's one-to-many shape. Unlike
+-- payer_email_domain (unique per Payer — Payers are schema-isolated per
+-- Tenant, so the same domain string could in principle recur across two
+-- different Tenants' own Payer tables), domain here is unique
+-- platform-wide: this table lives in global and IS the bootstrap
+-- tenant-resolution path for Tenant-employee signup — two Tenants can
+-- never claim the same domain, or there'd be no way to tell them apart
+-- at signup time. schema_name is a denormalized copy of
+-- tenant_registry.schema_name (kept in sync at write time, same
+-- convention as global.stripe_account_routing's authoritative-copy note
+-- below) so the Pre Sign-up Lambda's domain-to-schema lookup is a
+-- single-table query, not a join — the same "resolve schema before
+-- querying anything Tenant-specific" bootstrap requirement
+-- tenant_registry itself exists for (Finding 9, above).
+CREATE TABLE global.tenant_employee_domain (
+    id                  UUID PRIMARY KEY DEFAULT uuidv7(),
+    tenant_registry_id  UUID NOT NULL REFERENCES global.tenant_registry(id),
+    domain              TEXT NOT NULL UNIQUE,  -- e.g. "acme.com" — compared case-insensitively against the signup email's domain part
+    schema_name         TEXT NOT NULL,  -- denormalized from tenant_registry.schema_name
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by          UUID
+);
+CREATE INDEX ON global.tenant_employee_domain (tenant_registry_id);
+
 -- stripe_connected_account_id used to live here as a single routing-only
 -- pointer per Tenant (ADR-0020's original "one connected account per
 -- Tenant" design). Removed (ADR-0020 update): Stripe Connect moved to
@@ -430,6 +458,23 @@ CREATE TABLE payer (
 );
 CREATE UNIQUE INDEX ON payer (sap_customer_id) WHERE sap_customer_id IS NOT NULL;
 CREATE UNIQUE INDEX ON payer (salesforce_customer_id) WHERE salesforce_customer_id IS NOT NULL;
+
+-- Backs the self-service Access Request email-domain match the spec has
+-- named since story 7 ("email domain matches the company's") but never had
+-- schema behind — and, per ADR-0038, the portal's Cognito Pre Sign-up
+-- fraud gate (rejects a signup outright if the email domain isn't
+-- registered to the Tenant's own Payer). Child table, not a single column
+-- on payer, since a Payer can plausibly have more than one legal email
+-- domain (regional units, acquired brands).
+CREATE TABLE payer_email_domain (
+    id          UUID PRIMARY KEY DEFAULT uuidv7(),
+    payer_id    UUID NOT NULL REFERENCES payer(id),
+    domain      TEXT NOT NULL,  -- e.g. "acme.com" — compared case-insensitively against the signup email's domain part
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by  UUID,
+    UNIQUE (payer_id, domain)
+);
+CREATE INDEX ON payer_email_domain (domain);
 
 -- SAP KNVH-equivalent (Customer Hierarchy): time-sliced and sales-area-scoped
 -- — a Payer can roll up to a different parent depending on Sales Org/
@@ -1209,6 +1254,10 @@ CREATE INDEX ON contact (vendor_id);
 -- at most one active primary per Payer; same convention as tenant_contact
 CREATE UNIQUE INDEX ON contact (payer_id) WHERE is_primary AND status = 'active' AND payer_id IS NOT NULL;
 CREATE UNIQUE INDEX ON contact (vendor_id) WHERE is_primary AND status = 'active' AND vendor_id IS NOT NULL;
+-- backs the social-domain signup email scan (onboarding revisit, point
+-- 3) — a live lookup at Pre Sign-up time, not just an occasional query.
+-- CITEXT already folds case, so a plain index is case-insensitive for free.
+CREATE INDEX ON contact (email);
 
 -- Org affiliation is derived through contact_id (contact.payer_id/vendor_id)
 -- rather than duplicating payer_id/vendor_id here — one source of truth.
@@ -1220,7 +1269,7 @@ CREATE TABLE app_user (
     email                CITEXT NOT NULL UNIQUE,
     phone                TEXT,  -- for Tenant Users, who have no Contact row to carry it (Finding 5)
     is_tenant_user       BOOLEAN NOT NULL DEFAULT FALSE,
-    contact_id           UUID REFERENCES contact(id),
+    contact_id           UUID REFERENCES contact(id),  -- for non-Tenant Users: the CURRENTLY ACTIVE Payer/Vendor account for this login session — no longer a permanent 1:1 identity. Re-pointed at login time from whichever contact_id the user selects out of app_user_contact below, when that set holds more than one row (onboarding revisit, point 3 — a Contact-email match can resolve to more than one Payer, e.g. a shared consultant)
     status               TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deactivated')),
     deactivated_at       TIMESTAMPTZ,
     deactivated_by       UUID REFERENCES app_user(id),
@@ -1235,6 +1284,25 @@ CREATE TABLE app_user (
     )
 );
 CREATE INDEX ON app_user (contact_id);
+
+-- The full set of Payer/Vendor accounts an app_user is allowed to act as
+-- (onboarding revisit, point 3). Populated with more than one row when a
+-- social-domain signup's email matches Contact rows under more than one
+-- Payer — the user picks which one(s) apply instead of the signup
+-- silently guessing. app_user.contact_id above always points at whichever
+-- one of these rows is currently active; when this set holds more than
+-- one row, login prompts an account picker and re-points contact_id to
+-- the selection before the session proceeds.
+CREATE TABLE app_user_contact (
+    id           UUID PRIMARY KEY DEFAULT uuidv7(),
+    app_user_id  UUID NOT NULL REFERENCES app_user(id),
+    contact_id   UUID NOT NULL REFERENCES contact(id),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by   UUID,
+    UNIQUE (app_user_id, contact_id)
+);
+CREATE INDEX ON app_user_contact (app_user_id);
+CREATE INDEX ON app_user_contact (contact_id);
 ```
 
 The full Security & Roles domain (Authorization Object, Permission, Derived Role, `role_authorization_value`, Role Delegation, Impersonation Session/Action Log) remains **deliberately deferred behind Core AR/AP** — AR is being built before AP end-to-end (confirmed, see [ADR-0021](../adr/0021-parking-lot.md) item 11). One narrow slice of it is pulled forward below, though — not a change of plan, just building the two tables several jobs are already blocked on.

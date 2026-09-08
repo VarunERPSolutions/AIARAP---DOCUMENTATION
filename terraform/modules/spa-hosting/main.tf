@@ -1,7 +1,7 @@
 # S3 + CloudFront + ACM for one client-rendered SPA (ADR-0008), one
 # environment at a time — no server, no container, decoupled from any EC2
 # instance's health. Parameterized so the same shape serves both
-# react-external-app and react-support-app (ADR-0033) without duplicating
+# react-external-app and react-support-app (ADR-0038) without duplicating
 # this file twice; see shared/public_apps.tf for the two callers.
 #
 # CloudFront requires its ACM cert in us-east-1 regardless of where the
@@ -10,7 +10,7 @@
 # needed here, same reasoning already used for the Cognito custom domain
 # cert in shared/cognito.tf.
 #
-# Out of scope here (ADR-0033 open items, not yet designed): the Cognito
+# Out of scope here (ADR-0038 open items, not yet designed): the Cognito
 # app client/scopes this app authenticates with, and the CI/CD pipeline that
 # actually builds and uploads to these buckets — this module only stands up
 # the hosting target those depend on.

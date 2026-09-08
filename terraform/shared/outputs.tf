@@ -48,7 +48,7 @@ output "flow2_secret_arns" {
 }
 
 output "portal_app_hosting" {
-  description = "react-external-app's S3 bucket/CloudFront distribution per environment — feed bucket_names/distribution_ids into whatever CI pipeline eventually replaces the image-build+SSM-deploy path (docker/README.md, ADR-0033)."
+  description = "react-external-app's S3 bucket/CloudFront distribution per environment — feed bucket_names/distribution_ids into whatever CI pipeline eventually replaces the image-build+SSM-deploy path (docker/README.md, ADR-0038)."
   value = {
     bucket_names     = module.portal_app.bucket_names
     distribution_ids = module.portal_app.distribution_ids

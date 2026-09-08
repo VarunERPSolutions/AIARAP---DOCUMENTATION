@@ -1,6 +1,6 @@
 # S3 + CloudFront + ACM hosting for both portal apps, across every
 # environment — react-external-app (Payer/Vendor/Tenant User portal) and
-# react-support-app (AIARAP support staff), per ADR-0033. Both go public,
+# react-support-app (AIARAP support staff), per ADR-0038. Both go public,
 # all three environments, no Tailscale involved at all (see
 # architecture-diagram.html Figure 5).
 #

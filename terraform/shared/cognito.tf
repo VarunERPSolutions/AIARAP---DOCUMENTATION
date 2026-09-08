@@ -74,7 +74,7 @@ resource "aws_cognito_resource_server" "node" {
     scope_description = "Invoke Node API — prd"
   }
 
-  # Human login (Authorization Code + PKCE via Hosted UI), ADR-0033 —
+  # Human login (Authorization Code + PKCE via Hosted UI), ADR-0038 —
   # react-external-app and react-support-app, see public_apps_cognito.tf.
   # Mutually exclusive from node.invoke.<env> above and from each other: a
   # portal-scoped token was never issued the support scope or vice versa.

@@ -1,0 +1,3 @@
+# Onboarding Revisit: Self-Registration Resolution Paths, Multi-Payer Accounts, and Signup Error Messaging
+
+**Superseded by [ADR-0038](0038-portal-support-app-public-exposure-domain-cognito-and-signup.md).** Originally decided: the 4 self-registration resolution paths — Tenant-employee domain (`global.tenant_employee_domain`), Payer company-domain (admin-exists routing per ADR-0015), Payer social-domain (`contact`-email match, new `app_user_contact` for a person linked to more than one Payer, same Role across all), and rejection messaging (Pre Sign-up thrown-error text, source data fixed via the Tenant's own SAP/Salesforce). Kept here as a historical record — the current, merged decision lives in ADR-0038.

@@ -46,8 +46,9 @@ variable "app_server_subnet_ids" {
 # ---------------------------------------------------------------------------
 
 variable "private_subnet_ids" {
-  description = "Private subnet IDs for the internal NLB (networking.tf) and the pg-inventory-writer Lambda's ENIs. Must have network reachability to node-app, java-app, the SAP tailnet-proxy, and aiarap RDS. Likely the same subnets as app_server_subnet_ids above, but left as its own required variable rather than assumed, since this stack's NLB is separate from gateway_network.tf's."
+  description = "Subnet IDs for the internal NLB (networking.tf) and the pg-inventory-writer Lambda's ENIs. Must have network reachability to node-app, java-app, the SAP tailnet-proxy, and aiarap RDS. Confirmed via `aws ec2 describe-subnets` (2026-09-09) that vpc-072f816875fedf904 is the default VPC and every one of its subnets has MapPublicIpOnLaunch=true — there are no genuinely private subnets to point at. Defaulting to the same two subnets app_server_subnet_ids already uses (gateway_network.tf's NLB reuses them too), accepting that \"private\" here means \"not given its own internet-facing listener,\" not network-isolated. Replace with real private subnets (+ NAT) if that isolation ever actually matters."
   type        = list(string)
+  default     = ["subnet-04995cb5d11ee98b1", "subnet-06f5722306035b874"]
 }
 
 # --- Node backend (Tenant integration hub) ---
@@ -92,8 +93,9 @@ variable "tenant_sap_secret_arn_pattern" {
 # --- SAP backend ---
 
 variable "sap_proxy_instance_id" {
-  description = "EC2 instance that bridges VPC-private traffic into the Tailscale overlay to reach SAP (nginx/socat forwarding each environment's port below to the matching SAP HANA instance's Tailscale address — that forwarding config is outside this Terraform). Either aws-subnet-router repurposed, or a new dedicated box — your call, not assumed here."
+  description = "EC2 instance that bridges VPC-private traffic into the Tailscale overlay to reach SAP (nginx/socat forwarding each environment's port below to the matching SAP HANA instance's Tailscale address — that forwarding config is outside this Terraform). Either aws-subnet-router repurposed, or a new dedicated box — your call, not assumed here. TEMPORARY placeholder default below (2026-09-09) so plans/applies that don't touch SAP resources (e.g. the Cognito/authorizer dev-flow work) don't need a real value — networking.tf's aws_lb_target_group_attachment.backend has a precondition that hard-fails an apply if this placeholder is still set on any resource that's actually part of that apply. Replace with a real instance ID before applying anything SAP-related."
   type        = string
+  default     = "i-PLACEHOLDER-sap-proxy"
 }
 
 variable "sap_environments" {
@@ -109,42 +111,26 @@ variable "sap_environments" {
 # --- DNS ---
 
 variable "varunerpsolutions_com_zone_id" {
-  description = "Route53 hosted zone ID for varunerpsolutions.com (hosts the Cognito auth domain and the public SAP API domains)."
+  description = "Route53 hosted zone ID for varunerpsolutions.com (hosts the public SAP API domains, domains_sap.tf — no longer the Cognito auth domain, which switched to Cognito's built-in *.amazoncognito.com domains under ADR-0040). TEMPORARY placeholder default below (2026-09-09) so plans/applies that don't touch SAP resources don't need a real value — domains_sap.tf's aws_route53_record.sap_api_cert_validation has a precondition that hard-fails an apply if this placeholder is still set on any resource that's actually part of that apply. Replace with the real zone ID before applying anything SAP-domain-related."
   type        = string
+  default     = "PLACEHOLDER-ZONE-ID"
 }
 
-variable "aiarap_com_zone_id" {
-  description = "Route53 hosted zone ID for aiarap.com — same zone modules/tenant-onboarding uses for per-Tenant domains. NOT currently used by public_apps.tf/public_apps_domain.tf (those use manual Hostinger DNS instead — no Route53 zone was found for aiarap.com when that work was done; reconcile if/when this stack is actually adopted)."
-  type        = string
-}
+# aiarap_com_zone_id removed (2026-09-09) — dead variable, zero references
+# anywhere in this tree. If a real per-Tenant aiarap.com Route53 zone is
+# ever adopted, re-add it then rather than carrying an unused required
+# variable indefinitely.
 
 # --- Cognito / API Gateway ---
 
 variable "authorizer_reserved_concurrency" {
-  description = "Reserved concurrency for the shared authorizer Lambda (see modules/lambda-authorizer). -1 to leave it unreserved."
+  description = "Reserved concurrency for the shared authorizer Lambda (see modules/lambda-authorizer). -1 to leave it unreserved. Was 50 originally, but this account's actual Lambda concurrency ceiling is only 10 total (confirmed via `aws lambda get-account-settings`, 2026-09-09) — AWS requires >=10 unreserved remaining after any reservation, so any positive value here is currently impossible, not just this specific one. Left unreserved until the account's limit is raised (an AWS support request, not a Terraform change)."
   type        = number
-  default     = 50
+  default     = -1
 }
 
-# --- aiarap RDS (for pg-inventory-writer) ---
-
-variable "aiarap_db_instance_identifier" {
-  description = "RDS instance identifier for the aiarap Postgres database."
-  type        = string
-}
-
-variable "aiarap_db_name" {
-  description = "Database name on that instance to write the inventory schema into."
-  type        = string
-}
-
-variable "aiarap_db_secret_arn" {
-  description = "Secrets Manager secret with {\"username\":..., \"password\":...} for a Postgres role that can create/use the inventory schema."
-  type        = string
-}
-
-variable "aiarap_db_security_group_id" {
-  description = "Security group attached to the aiarap RDS instance. If set, this stack adds an ingress rule allowing 5432 from the pg-inventory-writer Lambda automatically. Leave null to wire that ingress rule yourself."
-  type        = string
-  default     = null
-}
+# aiarap_db_instance_identifier / aiarap_db_name / aiarap_db_secret_arn /
+# aiarap_db_security_group_id removed (2026-09-09) — the pg-inventory-writer
+# concern they fed (inventory.tf) moved to its own root module,
+# terraform/inventory/, since it had no cross-references into this stack's
+# Cognito/API Gateway/authorizer resources. See that module's variables.tf.

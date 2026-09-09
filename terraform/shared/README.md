@@ -2,21 +2,24 @@
 
 The once-created infrastructure that `tenant-onboarding` (per Tenant) and
 everything in `modules/` assume already exists: Cognito, the 2 per-backend
-inbound REST APIs, the shared authorizer wiring, the internal NLB, Java's
-separate outbound extraction infrastructure, and the inventory writer.
+inbound REST APIs, the shared authorizer wiring, the internal NLB, and Java's
+separate outbound extraction infrastructure. The Postgres inventory writer
+used to live here too — extracted to `terraform/inventory/` (2026-09-09), a
+genuinely separate concern with no cross-references into anything below.
 
 **Built per [ADR-0038](../../docs/adr/0038-portal-support-app-public-exposure-domain-cognito-and-signup.md)**:
 `public_apps.tf` stands up S3+CloudFront+ACM hosting (via `modules/spa-hosting`)
 for both `react-external-app` and `react-support-app`, all three environments,
-public internet, no Tailscale. `cognito.tf`'s `node-api` resource server now
-also carries `node.portal.<env>`/`node.support.<env>` alongside the existing
-`node.invoke.<env>` M2M scope, and `public_apps_cognito.tf` gives each app
-its own public (Authorization Code+PKCE) app client per environment. The
-shared Lambda authorizer accepts all three scopes now (`modules/lambda-authorizer`),
-and path-scoping — so a `portal`-scoped token can't reach `support`-only/
-M2M-only routes — is enforced downstream in `AIARAP-node-backend`'s
-`ScopeGuard` (that authorizer's own README explains why the split sits
-there rather than in this Lambda). See ADR-0038 and parking lot #55.
+public internet, no Tailscale.
+
+> **Superseded by [ADR-0040](../../docs/adr/0040-nine-cognito-pool-architecture.md) (confirmed, drafted, not applied)**: the rest of this paragraph describes ADR-0038's original single-pool Cognito design (`node.portal.<env>`/`node.support.<env>`/`node.invoke.<env>` scopes all on one resource server) — `cognito.tf` no longer matches it. See "What this creates" below for the current (drafted) shape: 9 pools, scopes without an `<env>` suffix. `public_apps_cognito.tf` (the per-app PKCE clients) was never created either way — still an open gap, not created by this rewrite.
+
+The shared Lambda authorizer accepts all three purposes (now via 9 pools,
+not 3 scopes on 1 pool — `modules/lambda-authorizer`), and path-scoping —
+so a `portal`-scoped token can't reach `support`-only/M2M-only routes — is
+enforced downstream in `AIARAP-node-backend`'s `ScopeGuard` (not yet built;
+that authorizer's own README explains why the split sits there rather than
+in this Lambda). See ADR-0038, ADR-0040, and parking lot #55.
 
 ## The core design: 2 inbound REST APIs, N stages
 
@@ -49,9 +52,17 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
 
 ## What this creates
 
-- **Cognito**: one user pool, custom domain (`auth.varunerpsolutions.com`),
-  two resource servers (`node-api`, `sap-api`) with their scopes — no
-  `java-api`.
+> **Note:** this file (`cognito.tf`) was rewritten for [ADR-0040](../../docs/adr/0040-nine-cognito-pool-architecture.md)'s 9-pool design — the single-shared-pool description this README used to give is gone. Drafted and `validate`/scoped-`plan`-checked in this branch, **not yet applied to AWS** — see ADR-0040 for the full rationale and design.
+
+- **Cognito**: 9 user pools (`aws_cognito_user_pool.app`, one per
+  (`support`/`portal`/`syscomms`) × (`dev`/`qa`/`prd`)), each with its own
+  built-in `<prefix>.auth.<region>.amazoncognito.com` Hosted UI domain — no
+  custom ACM-backed domain anymore (the old shared pool's
+  `auth.varunerpsolutions.com` is gone along with the pool it belonged to;
+  this account has no Route53 zone for either of its domains, so 9 custom
+  domains would mean 9 manual Hostinger DNS entries for no functional
+  gain). 12 resource servers total: `node-api` on every support/portal/
+  syscomms pool, plus `sap-api` on every syscomms pool — no `java-api`.
 - **One internal NLB + VPC Link**, with one listener/target group per entry
   in `local.backend_envs`.
 - **2 REST APIs** (`node`, `sap`), each with a proxying `{proxy+}`
@@ -68,10 +79,6 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
   `api_backend_map`, reserved concurrency set from
   `var.authorizer_reserved_concurrency` so a dev/test traffic spike can't
   starve prod of Lambda capacity.
-- **`modules/pg-inventory-writer`**, VPC-attached to reach `aiarap` RDS,
-  writing into the app's own `global` schema (ADR-0004) — not a competing
-  schema — with the RDS security group auto-wired for it if you provide
-  `aiarap_db_security_group_id`.
 - **`java_outbound.tf`**: the SQS batch-complete queue and the IAM policy
   Java's nightly extraction actually needs (Secrets Manager read on Tenant
   SAP credentials, SQS publish) — not an inbound API.
@@ -94,11 +101,10 @@ environment directly — no Host-header parsing, no fixed-per-apiId config.
 
 | Variable | Why it's not defaulted |
 |---|---|
-| `private_subnet_ids` | Not documented anywhere available to this session |
-| `sap_proxy_instance_id` | Genuinely your call — reuse `aws-subnet-router` or stand up a new box |
-| `varunerpsolutions_com_zone_id` | Route53 zone ID, account-specific |
-| `aiarap_com_zone_id` | Route53 zone ID for `aiarap.com` — same zone `tenant-onboarding` already assumes exists, account-specific |
-| `aiarap_db_instance_identifier`, `aiarap_db_name`, `aiarap_db_secret_arn` | RDS specifics not in INFRASTRUCTURE_REFERENCE.md |
+| `sap_proxy_instance_id` | Genuinely your call — reuse `aws-subnet-router` or stand up a new box. Only feeds the SAP side of `local.backend_envs` (`networking.tf`, `apis.tf`'s stages) — unused by the Cognito/authorizer/node-REST-API resources |
+| `varunerpsolutions_com_zone_id` | Route53 zone ID, account-specific. Only feeds `domains_sap.tf` (SAP's public API domain) — no longer used by `cognito.tf` (ADR-0040 moved the Cognito domains to Cognito's built-in `*.amazoncognito.com` format) |
+
+`private_subnet_ids` now defaults to the same 2 public subnets `app_server_subnet_ids` already uses — see that variable's own description in `variables.tf` for why (no genuinely private subnets exist in this account's default VPC). `aiarap_com_zone_id` was removed outright (dead, zero references). `aiarap_db_*` moved to `terraform/inventory/` along with the rest of the pg-inventory-writer concern — see that module's own README/variables.tf.
 
 `node_environments` defaults to `dev`+`qa` pointed at the existing
 documented instance (`i-0e8bb91b84754d419`) on the ports the `docker/`

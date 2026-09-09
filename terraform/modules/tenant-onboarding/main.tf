@@ -8,7 +8,7 @@ locals {
       conn_key = pair[0].key
       backend  = pair[0].backend
       env      = pair[1]
-      scope    = "${pair[0].backend}.invoke.${pair[1]}"
+      scope    = "${pair[0].backend}.invoke" # no <env> suffix, per ADR-0040 — the pool itself now encodes environment
       is_prod  = pair[1] == "prd"
     }
   }

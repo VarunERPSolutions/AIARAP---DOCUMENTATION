@@ -215,6 +215,13 @@ still open) and #57 (EC2 decommission).
 
 ## 11. Tenant Integration Hub (Cognito + API Gateway)
 
+> **Note:** the Cognito pool structure described in this section (and in
+> §11a/ADR-0038) is what's actually **live in AWS** today — one shared pool
+> plus 3 portal pools. [ADR-0040](../adr/0040-nine-cognito-pool-architecture.md)
+> (confirmed) replaces it with a 9-pool architecture — Terraform has been
+> drafted and validated in `terraform/shared` but not yet applied, so
+> nothing described below has changed in AWS itself yet.
+
 A separate system from everything above — sections 1–9 are about *employees*
 reaching internal servers over Tailscale; this is about *external* systems
 (10 Tenant Salesforce orgs, 10 Tenant SAP systems, plus VarunERP's own

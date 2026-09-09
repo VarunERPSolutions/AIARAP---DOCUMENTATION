@@ -22,6 +22,8 @@ All three are mutually exclusive by design — a token minted for one has no acc
 
 ## 3. Cognito pool structure (current state)
 
+> **Superseded by [ADR-0040](0040-nine-cognito-pool-architecture.md) (confirmed).** This section still describes what's actually **live in AWS** today — nothing deployed has changed. ADR-0040's 9-pool design (Support/External-Portal/System-Comms × dev/qa/prd) has been drafted in Terraform and validated, but not yet applied, as of this note.
+
 - **`node.invoke` (M2M) and `node.support` (`react-support-app`)** share one pool, `varunerp-integration-pool`, all three scopes registered on the same resource server. A reasonable default (avoids standing up a second pool/domain for no clear benefit) that's cheap to reverse later — not a hard architectural commitment.
 - **`node.portal` (`react-external-app`) — reopened into 3 separate pools, one per environment**: `varunerp-portal-dev-pool`, `varunerp-portal-qa-pool`, `varunerp-portal-prd-pool`, each with its own Hosted UI custom domain. Not one pool per Tenant (unbounded growth for N Tenants) and not the single cross-environment pool used everywhere else — a portal user's dev and prod accounts are deliberately different Cognito identities, matching how dev/qa/prod are already fully separate at every other layer.
 

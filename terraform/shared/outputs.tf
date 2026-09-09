@@ -27,18 +27,13 @@ output "sap_api_domains" {
   }
 }
 
-output "cognito_user_pool_id" {
-  value = aws_cognito_user_pool.shared.id
-}
+# cognito_user_pool_id / cognito_domain (singular) removed — ADR-0040
+# replaced the single shared pool with 9. See cognito_pool_ids /
+# cognito_pool_domains outputs in cognito.tf instead.
 
-output "cognito_domain" {
-  value = aws_cognito_user_pool_domain.auth.domain
-}
-
-output "inventory_writer_function_name" {
-  description = "Feed this into tenants/variables.tf's inventory_writer_function_name."
-  value       = module.pg_writer.function_name
-}
+# inventory_writer_function_name removed (2026-09-09) — moved along with
+# the rest of the pg-inventory-writer concern to terraform/inventory/,
+# which now produces this output itself.
 
 output "flow2_secret_arns" {
   description = "Secrets Manager ARN per provisioned SAP environment, holding VarunERP's own Salesforce->SAP OAuth credentials."

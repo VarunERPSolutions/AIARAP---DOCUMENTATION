@@ -8,9 +8,14 @@ variable "route53_zone_id" {
   type        = string
 }
 
-variable "cognito_user_pool_id" {
-  description = "Shared AIARAP Cognito user pool ID."
-  type        = string
+variable "cognito_user_pool_ids" {
+  description = "Map of environment -> \"syscomms\" Cognito pool ID (ADR-0040) — see terraform/shared/cognito.tf's cognito_pool_ids output, filtered to the syscomms-* entries."
+  type        = map(string)
+}
+
+variable "cognito_domains" {
+  description = "Map of environment -> the matching syscomms pool's Hosted UI domain — see terraform/shared/cognito.tf's cognito_pool_domains output, filtered to the syscomms-* entries."
+  type        = map(string)
 }
 
 variable "api_ids" {

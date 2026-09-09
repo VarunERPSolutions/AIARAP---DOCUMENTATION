@@ -40,15 +40,14 @@ variable "resource_server_identifiers" {
   }
 }
 
-variable "cognito_user_pool_id" {
-  description = "ID of the shared AIARAP Cognito user pool (created once, outside this module)."
-  type        = string
+variable "cognito_user_pool_ids" {
+  description = "Map of environment -> \"syscomms\" Cognito pool ID (ADR-0040) — each Tenant connection's app client is created in the pool matching its own environment, not one shared pool. Created once, outside this module (terraform/shared/cognito.tf)."
+  type        = map(string)
 }
 
-variable "cognito_domain" {
-  description = "Cognito hosted domain used for the OAuth token endpoint, embedded into each connection's secret for the Tenant's convenience."
-  type        = string
-  default     = "auth.varunerpsolutions.com"
+variable "cognito_domains" {
+  description = "Map of environment -> the matching syscomms pool's Hosted UI domain (full host, e.g. \"varunerp-syscomms-dev.auth.us-east-1.amazoncognito.com\"), used for the OAuth token endpoint embedded into each connection's secret. Created once, outside this module — see terraform/shared/cognito.tf's cognito_pool_domains output."
+  type        = map(string)
 }
 
 variable "api_ids" {

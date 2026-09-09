@@ -58,8 +58,8 @@ resource "aws_lambda_function" "authorizer" {
 
   environment {
     variables = {
-      COGNITO_USER_POOL_ID = var.cognito_user_pool_id
-      API_BACKEND_MAP      = jsonencode(var.api_backend_map)
+      POOL_MAP        = jsonencode(var.pool_map)
+      API_BACKEND_MAP = jsonencode(var.api_backend_map)
     }
   }
 

@@ -4,9 +4,12 @@ variable "function_name" {
   default     = "varunerp-api-authorizer"
 }
 
-variable "cognito_user_pool_id" {
-  description = "Shared VarunERP Cognito user pool ID whose access tokens this authorizer validates."
-  type        = string
+variable "pool_map" {
+  description = "The authorizer's full trust allowlist (ADR-0040): every Cognito pool ID it will accept a token from, keyed by pool ID, each with the (group, env) that pool represents (e.g. {\"us-east-1_xxx\" = {group = \"support\", env = \"dev\"}}). A token's unverified `iss` is matched against these keys to pick which pool's JWKS to verify against — an iss that doesn't match any key here is denied before any cryptographic check is attempted. Populate from the actual pools this stack creates (cognito.tf), never hand-typed."
+  type = map(object({
+    group = string
+    env   = string
+  }))
 }
 
 variable "api_backend_map" {

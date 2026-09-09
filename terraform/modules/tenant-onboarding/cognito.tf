@@ -5,7 +5,7 @@ resource "aws_cognito_user_pool_client" "conn" {
   for_each = local.connection_envs
 
   name         = "${var.subdomain}-${each.value.conn_key}-${each.value.env}"
-  user_pool_id = var.cognito_user_pool_id
+  user_pool_id = var.cognito_user_pool_ids[each.value.env]
 
   generate_secret = true
 

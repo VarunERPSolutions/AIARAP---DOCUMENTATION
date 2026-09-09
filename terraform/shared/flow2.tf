@@ -8,18 +8,22 @@ locals {
   flow2_envs = toset(keys(var.sap_environments)) # add "prd" here automatically once sap_environments includes it
 }
 
+# Lives under the "syscomms" (System Communications) pool for its matching
+# environment, per ADR-0040 — this is exactly the M2M/"invoke" purpose that
+# group represents, VarunERP's own Salesforce->SAP relationship being one
+# more caller of it alongside Tenant Salesforce/SAP (modules/tenant-onboarding).
 resource "aws_cognito_user_pool_client" "varunerp_sf_sap" {
   for_each = local.flow2_envs
 
   name         = "varunerp-sf-sap-${each.key}"
-  user_pool_id = aws_cognito_user_pool.shared.id
+  user_pool_id = aws_cognito_user_pool.app["syscomms-${each.key}"].id
 
   generate_secret = true
 
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["client_credentials"]
   allowed_oauth_scopes = [
-    "${aws_cognito_resource_server.sap.identifier}/sap.invoke.${each.key}"
+    "${aws_cognito_resource_server.app["syscomms-${each.key}-sap"].identifier}/sap.invoke"
   ]
   supported_identity_providers = ["COGNITO"]
 
@@ -41,8 +45,8 @@ resource "aws_secretsmanager_secret_version" "varunerp_sf_sap" {
   secret_string = jsonencode({
     client_id     = aws_cognito_user_pool_client.varunerp_sf_sap[each.key].id
     client_secret = aws_cognito_user_pool_client.varunerp_sf_sap[each.key].client_secret
-    token_url     = "https://${aws_cognito_user_pool_domain.auth.domain}/oauth2/token"
-    scope         = "${aws_cognito_resource_server.sap.identifier}/sap.invoke.${each.key}"
+    token_url     = "https://${aws_cognito_user_pool_domain.app["syscomms-${each.key}"].domain}.auth.${data.aws_region.current.name}.amazoncognito.com/oauth2/token"
+    scope         = "${aws_cognito_resource_server.app["syscomms-${each.key}-sap"].identifier}/sap.invoke"
     api_host      = aws_api_gateway_domain_name.sap[each.key].domain_name
   })
 }

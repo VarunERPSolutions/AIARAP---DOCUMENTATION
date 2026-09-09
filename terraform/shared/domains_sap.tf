@@ -43,6 +43,16 @@ resource "aws_route53_record" "sap_api_cert_validation" {
   ttl             = 300
   records         = [each.value.record]
   allow_overwrite = true
+
+  # Hard block, unlike a check block (which only warns) — only evaluates
+  # when this specific resource is actually part of the current plan/apply,
+  # so a scoped apply that never touches SAP domain resources is unaffected.
+  lifecycle {
+    precondition {
+      condition     = var.varunerpsolutions_com_zone_id != "PLACEHOLDER-ZONE-ID"
+      error_message = "varunerpsolutions_com_zone_id is still a placeholder — supply the real Route53 zone ID before applying SAP's domain resources."
+    }
+  }
 }
 
 resource "aws_acm_certificate_validation" "sap_api" {
@@ -80,5 +90,12 @@ resource "aws_route53_record" "sap_alias" {
     name                   = aws_api_gateway_domain_name.sap[each.key].regional_domain_name
     zone_id                = aws_api_gateway_domain_name.sap[each.key].regional_zone_id
     evaluate_target_health = false
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.varunerpsolutions_com_zone_id != "PLACEHOLDER-ZONE-ID"
+      error_message = "varunerpsolutions_com_zone_id is still a placeholder — supply the real Route53 zone ID before applying SAP's domain resources."
+    }
   }
 }

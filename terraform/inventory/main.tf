@@ -1,3 +1,12 @@
+# Extracted from terraform/shared (was inventory.tf there) — a genuinely
+# separate concern (the Postgres inventory writer that tracks Tenant
+# onboarding records) with no cross-references into shared's Cognito/API
+# Gateway/authorizer resources, so it gets its own state/variables rather
+# than making every plan/apply against the Cognito+Gateway stack also
+# resolve db-instance-identifier/db-name/db-secret-arn values it never uses.
+# See docs/adr/0040-nine-cognito-pool-architecture.md's "cleanest Terraform
+# design" discussion for why this split happened.
+
 data "aws_db_instance" "aiarap" {
   db_instance_identifier = var.aiarap_db_instance_identifier
 }

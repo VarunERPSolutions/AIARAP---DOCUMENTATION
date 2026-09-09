@@ -73,6 +73,49 @@ resource "aws_vpc_security_group_ingress_rule" "gateway_backend_access" {
   description                  = "Allow ${each.key} traffic from the API Gateway VPC Link only"
 }
 
+# --- Allow the NLBs' own health-check probes --------------------------------
+# An NLB's health checks originate from its own load balancer node ENIs, not
+# from a forwarded client request — and neither aws_lb.internal (networking.tf)
+# nor aws_lb.backend (this file) has a security group attached (confirmed via
+# `aws elbv2 describe-load-balancers`, 2026-09-10: both return
+# SecurityGroups: None — the SG-for-NLB feature isn't enabled on either). A
+# referenced_security_group_id rule can therefore never match health-check
+# traffic, unlike real proxied requests, which inherit the VPC Link ENI's own
+# source IP/SG membership via preserve_client_ip (see file header). Confirmed
+# live: node-dev's NLB target sat "unhealthy" / Target.FailedHealthChecks
+# despite the container running and port 3001 listening (`docker ps`, `ss
+# -tlnp` both checked via SSM) — the probe was being blocked by this SG
+# before it ever reached the port.
+#
+# This rule is scoped as tightly as a CIDR-based rule can be: only the two
+# subnets the NLB nodes themselves live in (var.app_server_subnet_ids /
+# var.private_subnet_ids — confirmed identical today), not the VPC's full
+# range and not 0.0.0.0/0. It does not replace the SG-reference rule above;
+# both are additive, so real traffic is still gated on VPC-Link identity and
+# only the health-check path relies on subnet CIDR instead.
+data "aws_subnet" "app_server" {
+  for_each = toset(var.app_server_subnet_ids)
+  id       = each.value
+}
+
+resource "aws_vpc_security_group_ingress_rule" "gateway_backend_access_healthcheck" {
+  for_each = {
+    for pair in setproduct(keys(local.backend_ports), keys(data.aws_subnet.app_server)) :
+    "${pair[0]}-${pair[1]}" => {
+      backend = pair[0]
+      port    = local.backend_ports[pair[0]]
+      cidr    = data.aws_subnet.app_server[pair[1]].cidr_block
+    }
+  }
+
+  security_group_id = aws_security_group.gateway_backend_access.id
+  cidr_ipv4         = each.value.cidr
+  ip_protocol       = "tcp"
+  from_port         = each.value.port
+  to_port           = each.value.port
+  description       = "Allow NLB health-check probes for ${each.value.backend} (NLB nodes carry no SG membership - scoped to the NLB own subnet CIDR, not VPC-wide)"
+}
+
 # --- Attach the new SG to each instance's existing ENI (additive only) -----
 
 data "aws_instance" "java_app" {

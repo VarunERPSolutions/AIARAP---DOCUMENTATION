@@ -34,7 +34,12 @@ module "authorizer" {
     for key in local.backends : aws_api_gateway_rest_api.this[key].id => key
   }
 
-  pool_map = local.cognito_pool_map
+  # Additive only (ADR-0041, sandcastle_cognito.tf) — the 4 Sandcastle lane
+  # pools are trusted alongside the 2 real active pools, never replacing or
+  # narrowing them. Each lane pool's env is "sandcastle-N", never "dev"/
+  # "qa"/"prd", so it can only ever authenticate against that lane's own
+  # API Gateway stage (sandcastle.tf) — see that file's header comment.
+  pool_map = merge(local.cognito_pool_map, local.sandcastle_pool_map)
 }
 
 resource "aws_api_gateway_authorizer" "this" {

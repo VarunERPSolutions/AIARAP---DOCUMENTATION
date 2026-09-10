@@ -87,6 +87,9 @@ resource "aws_api_gateway_deployment" "this" {
       aws_api_gateway_integration.root[each.key].id,
       aws_api_gateway_integration.proxy[each.key].id,
       aws_api_gateway_authorizer.this[each.key].id,
+      aws_api_gateway_method.proxy_options[each.key].id,
+      aws_api_gateway_integration.proxy_options[each.key].id,
+      aws_api_gateway_integration_response.proxy_options[each.key].id,
     ]))
   }
 
@@ -97,6 +100,7 @@ resource "aws_api_gateway_deployment" "this" {
   depends_on = [
     aws_api_gateway_integration.root,
     aws_api_gateway_integration.proxy,
+    aws_api_gateway_integration_response.proxy_options,
   ]
 }
 

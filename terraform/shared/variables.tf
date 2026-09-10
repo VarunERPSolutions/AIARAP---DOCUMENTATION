@@ -123,12 +123,6 @@ variable "varunerpsolutions_com_zone_id" {
 
 # --- Cognito / API Gateway ---
 
-variable "sandcastle_lane_count" {
-  description = "Number of pre-provisioned Sandcastle E2E lanes (ADR-0041) — each a full isolated request path (API Gateway stage + NLB listener/target group + dedicated syscomms Cognito pool). Locked at 4: comfortable headroom over the realistic 2-3 concurrent-linked-set case given the 'one issue per iteration' rule in .sandcastle/implement-prompt.md (AIARAP root repo). Cheap to widen later — just more identical entries."
-  type        = number
-  default     = 4
-}
-
 variable "authorizer_reserved_concurrency" {
   description = "Reserved concurrency for the shared authorizer Lambda (see modules/lambda-authorizer). -1 to leave it unreserved. Was 50 originally, but this account's actual Lambda concurrency ceiling is only 10 total (confirmed via `aws lambda get-account-settings`, 2026-09-09) — AWS requires >=10 unreserved remaining after any reservation, so any positive value here is currently impossible, not just this specific one. Left unreserved until the account's limit is raised (an AWS support request, not a Terraform change)."
   type        = number

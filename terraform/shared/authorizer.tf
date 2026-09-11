@@ -34,12 +34,14 @@ module "authorizer" {
     for key in local.backends : aws_api_gateway_rest_api.this[key].id => key
   }
 
-  # Additive only (ADR-0041, sandcastle_cognito.tf) — the 4 Sandcastle lane
-  # pools are trusted alongside the 2 real active pools, never replacing or
-  # narrowing them. Each lane pool's env is "sandcastle-N", never "dev"/
-  # "qa"/"prd", so it can only ever authenticate against that lane's own
-  # API Gateway stage (sandcastle.tf) — see that file's header comment.
-  pool_map = merge(local.cognito_pool_map, local.sandcastle_pool_map)
+  # Was merge(local.cognito_pool_map, local.sandcastle_pool_map) until
+  # 2026-09-11, when the Sandcastle lane pools were deleted from AWS and
+  # sandcastle_cognito.tf was removed (ADR-0041 withdrawn — see docs/adr/README.md).
+  # The deployed Lambda's POOL_MAP was updated to match on the same day, so
+  # live config and this code agree: the 2 active dev pools only. Verified
+  # afterwards with a real Cognito login through the full chain (support user
+  # -> Gateway -> authorizer -> NLB -> NestJS) returning 200.
+  pool_map = local.cognito_pool_map
 }
 
 resource "aws_api_gateway_authorizer" "this" {

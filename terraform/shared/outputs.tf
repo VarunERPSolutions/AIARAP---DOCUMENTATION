@@ -42,6 +42,18 @@ output "flow2_secret_arns" {
   }
 }
 
+output "java_internal_lb_dns_name" {
+  description = "ADR-0042: node-app's JAVA_SERVICE_URL should be http://<this>:<java_environments[env].port> — never a specific Java instance. Same hostname across every environment; only the port (and which instances answer behind it) differs."
+  value       = aws_lb.java_internal.dns_name
+}
+
+output "node_java_internal_secret_arns" {
+  description = "ADR-0042: Secrets Manager ARN per environment holding the Node<->Java shared bearer token (NODE_JAVA_INTERNAL_TOKEN). docker/deploy.sh pulls this into both node-app's and java-app's .env.secrets for the matching environment."
+  value = {
+    for env in keys(var.java_environments) : env => aws_secretsmanager_secret.node_java_internal[env].arn
+  }
+}
+
 # portal/support app hosting outputs deliberately NOT restored here — the
 # spa-hosting module (module.portal_app/module.support_app) they referenced
 # is superseded by the S3+CloudFront+WAF design in public_apps.tf, which

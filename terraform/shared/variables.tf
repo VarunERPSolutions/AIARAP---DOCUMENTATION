@@ -18,10 +18,18 @@ variable "java_app_instance_id" {
 # react-support-app moved to S3+CloudFront (public_apps.tf) and the shared
 # react-app EC2 instance is being decommissioned — see docs/adr/0021-parking-lot.md #57.
 
-# Inputs for gateway_network.tf (internal NLB + VPC Link, ADR-0003's gateway
-# reaching the backends). All three app instances confirmed live in this one
-# default VPC via `aws ec2 describe-instances`, 2026-09-07 — see
+# Inputs shared by java_internal_lb.tf (Node's internal LB path to Java,
+# ADR-0042) and networking.tf (the external-facing internal NLB feeding
+# API Gateway, ADR-0039). All three app instances confirmed live in this
+# one default VPC via `aws ec2 describe-instances`, 2026-09-07 — see
 # INFRASTRUCTURE_REFERENCE.md §2.
+#
+# The old gateway_network.tf this comment used to point at is gone — it
+# wired java_app behind the external-facing VPC Link, which contradicted
+# the already-tracked Java-outbound-only decision; see ADR-0042 §0 for the
+# full reconciliation. app_server_subnet_ids itself is unaffected — it's a
+# real, still-correct pair of subnets, just now consumed by a different
+# (internal-only) load balancer for Java's side.
 
 variable "vpc_id" {
   description = "The single default VPC all three app instances live in."
@@ -29,8 +37,14 @@ variable "vpc_id" {
   default     = "vpc-072f816875fedf904"
 }
 
+variable "node_app_security_group_id" {
+  description = "node-app's genuine, permanent security group — the hand-created \"dev-test-app-servers\" group (INFRASTRUCTURE_REFERENCE.md §2), shared by all 3 dev/test app instances. java_internal_lb.tf (ADR-0042) references this directly as the allowed source for the Java internal LB, deliberately NOT derived from a live `data.aws_instance` lookup of node-app's current SGs — that live-instance approach picked up the (also being destroyed) old gateway_backend_access SG as a false positive during a real scoped plan, which would have created an apply-ordering risk (AWS won't delete a SG still referenced by another rule)."
+  type        = string
+  default     = "sg-0dfb6d3af8165709a"
+}
+
 variable "app_server_subnet_ids" {
-  description = "Subnets the app instances live in — java-app's (us-east-1b) and node-app's (us-east-1a). The internal NLB and the VPC Link both need to span these two."
+  description = "Subnets the app instances live in — java-app's (us-east-1b) and node-app's (us-east-1a). Both the external-facing internal NLB (networking.tf) and Java's own internal-only LB (java_internal_lb.tf, ADR-0042) need to span these two."
   type        = list(string)
   default     = ["subnet-04995cb5d11ee98b1", "subnet-06f5722306035b874"]
 }
@@ -46,7 +60,7 @@ variable "app_server_subnet_ids" {
 # ---------------------------------------------------------------------------
 
 variable "private_subnet_ids" {
-  description = "Subnet IDs for the internal NLB (networking.tf) and the pg-inventory-writer Lambda's ENIs. Must have network reachability to node-app, java-app, the SAP tailnet-proxy, and aiarap RDS. Confirmed via `aws ec2 describe-subnets` (2026-09-09) that vpc-072f816875fedf904 is the default VPC and every one of its subnets has MapPublicIpOnLaunch=true — there are no genuinely private subnets to point at. Defaulting to the same two subnets app_server_subnet_ids already uses (gateway_network.tf's NLB reuses them too), accepting that \"private\" here means \"not given its own internet-facing listener,\" not network-isolated. Replace with real private subnets (+ NAT) if that isolation ever actually matters."
+  description = "Subnet IDs for the internal NLB (networking.tf) and the pg-inventory-writer Lambda's ENIs. Must have network reachability to node-app, java-app, the SAP tailnet-proxy, and aiarap RDS. Confirmed via `aws ec2 describe-subnets` (2026-09-09) that vpc-072f816875fedf904 is the default VPC and every one of its subnets has MapPublicIpOnLaunch=true — there are no genuinely private subnets to point at. Defaulting to the same two subnets app_server_subnet_ids already uses (java_internal_lb.tf's Java-only internal NLB reuses them too), accepting that \"private\" here means \"not given its own internet-facing listener,\" not network-isolated. Replace with real private subnets (+ NAT) if that isolation ever actually matters."
   type        = list(string)
   default     = ["subnet-04995cb5d11ee98b1", "subnet-06f5722306035b874"]
 }
@@ -60,8 +74,10 @@ variable "private_subnet_ids" {
 # keep the intended shape visible. Replace "i-PLACEHOLDER-*" with the real
 # instance ID once that box exists.
 #
-# No java_environments here — Java has no inbound Tenant-facing routing at
-# all (ADR-0039). See java_outbound.tf for its actual infrastructure.
+# Java has no *Tenant-facing* routing here (ADR-0039 unchanged — see
+# java_outbound.tf for its outbound-only infrastructure). It does have its
+# own private, internal-only routing for Node's synchronous calls — see
+# java_environments below and java_internal_lb.tf (ADR-0042).
 
 variable "node_environments" {
   description = "Map of environment -> { instance_id, port } for node-app. `port` is used as both the NLB listener port and the target port on that instance."
@@ -73,6 +89,32 @@ variable "node_environments" {
     dev = { instance_id = "i-0e8bb91b84754d419", port = 3001 }    # shares the instance with qa
     qa  = { instance_id = "i-0e8bb91b84754d419", port = 3002 }    # shares the instance with dev
     prd = { instance_id = "i-PLACEHOLDER-node-prd", port = 3000 } # NOT YET PROVISIONED — do not apply as-is
+  }
+}
+
+# --- Java backend: internal-only synchronous path (java_internal_lb.tf, ADR-0042) ---
+#
+# Same per-environment shape as node_environments, except instance_ids is a
+# LIST — production will need >=2 for horizontal capacity/availability;
+# dev/qa may run 1 behind the identical topology.
+#
+# DELIBERATELY DEV-ONLY FOR NOW: only `dev` is defined below. qa/prd
+# infrastructure, instances, NLB targets, and secrets are out of scope for
+# this pass — add `qa`/`prd` entries here, same shape, once that capacity
+# is actually provisioned and ready to onboard. The application code on
+# both sides (Node's GatewayClientService, Java's InternalServiceAuthFilter)
+# is already fully environment-agnostic (JAVA_SERVICE_URL/
+# NODE_JAVA_INTERNAL_TOKEN env vars only) — extending to qa/prd later is a
+# Terraform-only change, nothing to touch in either app.
+
+variable "java_environments" {
+  description = "Map of environment -> { instance_ids, port } for java-app's internal synchronous path. `instance_ids` is a list (>=2 in prod) since a target group attachment is one resource per instance. `port` is used as both the internal NLB listener port and the target port on every instance in the list. Dev-only today — see the comment above before adding qa/prd."
+  type = map(object({
+    instance_ids = list(string)
+    port         = number
+  }))
+  default = {
+    dev = { instance_ids = ["i-01afdc2668e71f05b"], port = 4001 } # same EC2 instance node-app's dev/qa containers share; no java qa/prd entry exists yet
   }
 }
 
@@ -122,12 +164,6 @@ variable "varunerpsolutions_com_zone_id" {
 # variable indefinitely.
 
 # --- Cognito / API Gateway ---
-
-variable "sandcastle_lane_count" {
-  description = "Number of pre-provisioned Sandcastle E2E lanes (ADR-0041) — each a full isolated request path (API Gateway stage + NLB listener/target group + dedicated syscomms Cognito pool). Locked at 4: comfortable headroom over the realistic 2-3 concurrent-linked-set case given the 'one issue per iteration' rule in .sandcastle/implement-prompt.md (AIARAP root repo). Cheap to widen later — just more identical entries."
-  type        = number
-  default     = 4
-}
 
 variable "authorizer_reserved_concurrency" {
   description = "Reserved concurrency for the shared authorizer Lambda (see modules/lambda-authorizer). -1 to leave it unreserved. Was 50 originally, but this account's actual Lambda concurrency ceiling is only 10 total (confirmed via `aws lambda get-account-settings`, 2026-09-09) — AWS requires >=10 unreserved remaining after any reservation, so any positive value here is currently impossible, not just this specific one. Left unreserved until the account's limit is raised (an AWS support request, not a Terraform change)."

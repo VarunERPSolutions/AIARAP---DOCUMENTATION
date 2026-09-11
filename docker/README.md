@@ -48,13 +48,31 @@ directory first — `deploy.sh` does exactly that and nothing else.
 registers them directly, since node-app receives inbound Tenant/Salesforce
 calls.
 
-**java-app's** host ports are *not* NLB targets. Per ADR-0039, Java/Spring
-Batch is a nightly outbound-only worker (it calls out to each Tenant's SAP
-system; it never receives inbound calls) — there's no Tenant-facing API,
-Cognito scope, or NLB listener for it at all (see
-`terraform/shared/java_outbound.tf`). These ports exist only for
-local health checks/monitoring (e.g. Spring Boot Actuator) if the service
-exposes one — not part of any routing path.
+**java-app's** host ports are *not* Tenant-facing NLB targets — Java stays
+outbound-only with respect to SAP/Tenant traffic (ADR-0039,
+`terraform/shared/java_outbound.tf`), no Cognito scope or Tenant-facing API
+Gateway route exists for it. They ARE, however, the target ports for a
+second, purely internal load balancer: `java-internal-nlb`
+(`terraform/shared/java_internal_lb.tf`, ADR-0042) fronts node-app's
+synchronous calls into java-app, and only node-app's own security group can
+reach it — never API Gateway, never the public internet. **Dev-only for
+now** (`var.java_environments` deliberately has no `qa`/`prd` entry yet —
+see that variable's own comment) — on the EC2 dev box this "just works" the
+same way node's target group does today: the container's host port (4001)
+is what the LB's target group points at.
+node-app reads that LB's DNS name via `JAVA_SERVICE_URL` (see
+`docker/node-app/dev/.env.example`) — never a specific java-app instance —
+so the same app code will work unchanged once qa/prod are added, whether 1
+instance answers behind the LB or 2+.
+
+**Local docker-compose (laptop) development**: if you also run both
+containers locally rather than only on the EC2 dev boxes, `JAVA_SERVICE_URL`
+is the one thing that differs — point it at `http://java-dev:8080` (add a
+shared external Docker network so `node-dev`/`java-dev` can resolve each
+other by service name) instead of the internal LB's AWS DNS name. Nothing
+else changes: the Node/Spring code only ever reads `JAVA_SERVICE_URL` from
+the environment, so a local compose override for that one variable is
+enough — no separate code path or "local mode" needed.
 
 ## What's actually isolated, and how
 

@@ -10,17 +10,21 @@
 # the token-exchange fetch() to /oauth2/token was being silently blocked by
 # this CSP, which predated any Cognito call existing in either app's code.
 #
-# node API Gateway: react_support now also calls the real node/dev REST API
-# (GET /me — the ScopeGuard smoke-test endpoint) directly from the browser,
-# so its execute-api hostname needs connect-src too. Same discovery
-# mechanism as the Cognito fix above — added proactively this time rather
-# than waiting to hit the same CSP block again. react_external's
-# env.apiGatewayUrl is still dead code, not added here.
+# node API Gateway: both apps now call the real node/dev REST API (GET
+# /me — the ScopeGuard smoke-test endpoint) directly from the browser, so
+# both need its execute-api hostname in connect-src. react_support got this
+# first (2026-09-09); react_external's own /me call landed later
+# (feature/portal-e2e-me) and initially missed this CSP entry — caught the
+# same way as both prior fixes: a real headless-Chromium E2E test
+# (e2e/portal-login.e2e.mjs in AIARAP-external-app) actually clicking
+# through Sign In -> Hosted UI -> Who am I, whose /me fetch was silently
+# blocked with "violates Content Security Policy" until this was added.
+# Confirmed live 2026-09-11 via aws cloudfront get-response-headers-policy.
 
 locals {
-  # connect-src per app: react_external's only live call is now the Cognito
-  # token exchange (its env.ts/API-gateway config is still dead code — see
-  # the architecture audit — that's unrelated and unchanged here).
+  # connect-src per app: react_external now has two — the Cognito token
+  # exchange and the real node API Gateway /me call (env.apiGatewayUrl is
+  # no longer dead code as of feature/portal-e2e-me).
   # react_support has three: the Cognito token exchange, the real node API
   # Gateway call, and its pre-existing Tailscale-only java-app call
   # (src/api/customers.ts) — the latter already fails independently via
@@ -28,7 +32,7 @@ locals {
   # pre-existing issue tied to the deferred Support API redesign, not
   # something this CSP change touches.
   spa_csp = {
-    react_external = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://varunerp-portal-dev.auth.us-east-1.amazoncognito.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    react_external = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://varunerp-portal-dev.auth.us-east-1.amazoncognito.com https://hn0omem2c0.execute-api.us-east-1.amazonaws.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
     react_support  = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://varunerp-support-dev.auth.us-east-1.amazoncognito.com https://hn0omem2c0.execute-api.us-east-1.amazonaws.com http://java-app.tail14147c.ts.net:4001; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
   }
 }

@@ -1,7 +1,14 @@
 # CloudFront Response Headers Policy per app — security headers + a CSP
 # derived from actually inspecting each app's built output and source
 # (confirmed: no inline <script>/<style>, no dangerouslySetInnerHTML in
-# either app; both use Google Fonts via a <link> in index.html).
+# either app). react_support still loads Google Fonts via a <link> in
+# index.html; react_external self-hosts Plus Jakarta Sans under /assets/
+# (perf pass, 2026-09-11) and no longer talks to fonts.googleapis.com/
+# fonts.gstatic.com at all, so those two hosts are dropped from ONLY its
+# style-src/font-src below — leaving them in would be a dead allowance for
+# an origin the app never contacts. react_support's CSP is intentionally
+# unchanged here (still needs both hosts) — see AIARAP-support-app's own
+# equivalent perf commit (9777263) if its CSP is ever tightened too.
 #
 # Cognito/auth: each app's connect-src includes ONLY its own pool's Hosted
 # UI domain (ADR-0040) — react_external -> portal-dev, react_support ->
@@ -32,7 +39,7 @@ locals {
   # pre-existing issue tied to the deferred Support API redesign, not
   # something this CSP change touches.
   spa_csp = {
-    react_external = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://varunerp-portal-dev.auth.us-east-1.amazoncognito.com https://hn0omem2c0.execute-api.us-east-1.amazonaws.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    react_external = "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://varunerp-portal-dev.auth.us-east-1.amazoncognito.com https://hn0omem2c0.execute-api.us-east-1.amazonaws.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
     react_support  = "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://varunerp-support-dev.auth.us-east-1.amazoncognito.com https://hn0omem2c0.execute-api.us-east-1.amazonaws.com http://java-app.tail14147c.ts.net:4001; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
   }
 }

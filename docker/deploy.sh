@@ -27,6 +27,15 @@ aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --query SecretStrin
   | jq -r 'to_entries | map("\(.key)=\(.value)") | .[]' > .env.secrets \
   || touch .env.secrets
 
+# Node<->Java internal service credential (ADR-0042) — node-app and
+# java-app both read the SAME per-env value (NODE_JAVA_INTERNAL_TOKEN),
+# appended onto the same .env.secrets file so docker-compose's existing
+# env_file wiring picks it up with no compose changes.
+INTERNAL_SECRET_ID="varunerp/internal/node-java/${ENV}"
+aws secretsmanager get-secret-value --secret-id "$INTERNAL_SECRET_ID" --query SecretString --output text \
+  | jq -r 'to_entries | map("\(.key)=\(.value)") | .[]' >> .env.secrets \
+  || true
+
 if [ "$ENV" = "qa" ]; then
   [ -n "$TAG" ] || { echo "qa deploys require an explicit tag (the SHA being promoted)" >&2; exit 1; }
   VAR_NAME="$(echo "${APP}" | tr '-' '_' | tr '[:lower:]' '[:upper:]' | sed 's/_APP$//')_QA_TAG"

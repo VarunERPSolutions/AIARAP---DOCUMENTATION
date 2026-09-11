@@ -89,25 +89,26 @@ variable "node_environments" {
 # --- Java backend: internal-only synchronous path (java_internal_lb.tf, ADR-0042) ---
 #
 # Same per-environment shape as node_environments, except instance_ids is a
-# LIST — production needs >=2 for horizontal capacity/availability; dev/qa
-# may run 1 today behind the identical topology. dev/qa share one EC2
-# instance (two Docker containers, different host ports, same as
-# node_environments/docker/README.md). prd ISN'T PROVISIONED YET — its
-# placeholder list deliberately holds 2 entries so the >=2-instance shape
-# is visible even before real IDs exist; replace both with real instance
-# IDs (ideally in the two different app_server_subnet_ids/AZs) once that
-# capacity is provisioned.
+# LIST — production will need >=2 for horizontal capacity/availability;
+# dev/qa may run 1 behind the identical topology.
+#
+# DELIBERATELY DEV-ONLY FOR NOW: only `dev` is defined below. qa/prd
+# infrastructure, instances, NLB targets, and secrets are out of scope for
+# this pass — add `qa`/`prd` entries here, same shape, once that capacity
+# is actually provisioned and ready to onboard. The application code on
+# both sides (Node's GatewayClientService, Java's InternalServiceAuthFilter)
+# is already fully environment-agnostic (JAVA_SERVICE_URL/
+# NODE_JAVA_INTERNAL_TOKEN env vars only) — extending to qa/prd later is a
+# Terraform-only change, nothing to touch in either app.
 
 variable "java_environments" {
-  description = "Map of environment -> { instance_ids, port } for java-app's internal synchronous path. `instance_ids` is a list (>=2 in prod) since a target group attachment is one resource per instance. `port` is used as both the internal NLB listener port and the target port on every instance in the list."
+  description = "Map of environment -> { instance_ids, port } for java-app's internal synchronous path. `instance_ids` is a list (>=2 in prod) since a target group attachment is one resource per instance. `port` is used as both the internal NLB listener port and the target port on every instance in the list. Dev-only today — see the comment above before adding qa/prd."
   type = map(object({
     instance_ids = list(string)
     port         = number
   }))
   default = {
-    dev = { instance_ids = ["i-01afdc2668e71f05b"], port = 4001 }                                  # shares the instance with qa
-    qa  = { instance_ids = ["i-01afdc2668e71f05b"], port = 4002 }                                  # shares the instance with dev
-    prd = { instance_ids = ["i-PLACEHOLDER-java-prd-1", "i-PLACEHOLDER-java-prd-2"], port = 8080 } # NOT YET PROVISIONED — do not apply as-is; keep >=2 entries once real IDs are known
+    dev = { instance_ids = ["i-01afdc2668e71f05b"], port = 4001 } # same EC2 instance node-app's dev/qa containers share; no java qa/prd entry exists yet
   }
 }
 

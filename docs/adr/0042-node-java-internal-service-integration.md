@@ -27,6 +27,10 @@ Before this design could be finalized, an inconsistency in `terraform/shared` ne
 
 **Same architecture across dev/QA/production**: identical Terraform shape (`java_environments` map of `{instance_ids, port}`) in every environment — only the instance IDs, counts, ports, and per-environment secret values differ. Dev/QA today share one EC2 instance via two Docker containers on different host ports (matching the existing `docker/README.md` dev/qa isolation model); production gets its own ≥2-instance entry once provisioned.
 
+## 1.1 Rollout scope: dev-only for now
+
+This ADR's design covers dev/QA/production identically, but the *implementation* in this pass is deliberately **dev-only** — `var.java_environments` (`terraform/shared/variables.tf`) carries only a `dev` entry; no QA/production instances, NLB targets, or Secrets Manager secrets are created. Both applications' code (Node's `GatewayClientService`, Java's `InternalServiceAuthFilter`) is fully environment-agnostic — driven entirely by `JAVA_SERVICE_URL`/`NODE_JAVA_INTERNAL_TOKEN` env vars, with no environment-specific branching anywhere. Extending to QA/production later is a Terraform-only change (add `qa`/`prd` entries to `var.java_environments`, same shape); neither app's code needs to change.
+
 ## 2. What this does not change
 
 - Java remains outbound-only with respect to Tenant/SAP traffic (`java_outbound.tf`) — this ADR only adds a second, entirely internal capability (serving Node's synchronous calls), not a new external surface.

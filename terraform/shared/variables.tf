@@ -37,6 +37,12 @@ variable "vpc_id" {
   default     = "vpc-072f816875fedf904"
 }
 
+variable "node_app_security_group_id" {
+  description = "node-app's genuine, permanent security group — the hand-created \"dev-test-app-servers\" group (INFRASTRUCTURE_REFERENCE.md §2), shared by all 3 dev/test app instances. java_internal_lb.tf (ADR-0042) references this directly as the allowed source for the Java internal LB, deliberately NOT derived from a live `data.aws_instance` lookup of node-app's current SGs — that live-instance approach picked up the (also being destroyed) old gateway_backend_access SG as a false positive during a real scoped plan, which would have created an apply-ordering risk (AWS won't delete a SG still referenced by another rule)."
+  type        = string
+  default     = "sg-0dfb6d3af8165709a"
+}
+
 variable "app_server_subnet_ids" {
   description = "Subnets the app instances live in — java-app's (us-east-1b) and node-app's (us-east-1a). Both the external-facing internal NLB (networking.tf) and Java's own internal-only LB (java_internal_lb.tf, ADR-0042) need to span these two."
   type        = list(string)

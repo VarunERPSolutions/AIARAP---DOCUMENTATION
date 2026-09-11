@@ -101,14 +101,17 @@ resource "aws_lb_target_group_attachment" "java" {
 # --- Security: only node-app's own security group may reach the Java -----
 # --- port(s); the LB's own health-check probes get a narrow subnet-CIDR --
 # --- allowance instead, since NLB nodes carry no SG identity to reference -
-
-data "aws_instance" "node_app_env" {
-  # Same placeholder-tolerance as above — a placeholder node instance_id
-  # (node_environments.prd today) must never be queried via a live AWS
-  # lookup.
-  for_each    = { for env, cfg in var.node_environments : env => cfg if !strcontains(cfg.instance_id, "PLACEHOLDER") }
-  instance_id = each.value.instance_id
-}
+#
+# Deliberately var.node_app_security_group_id (a fixed, known-permanent SG),
+# NOT a live `data.aws_instance` lookup of whatever's attached to node-app
+# right now. Confirmed via a real scoped plan (2026-09): node-app's live
+# instance still carries the OLD gateway_backend_access SG as a leftover
+# from the exact setup this file replaces — that SG is destroyed in this
+# same apply, so a rule referencing it as a source would create a real
+# apply-ordering risk (AWS refuses to delete a security group still
+# referenced by another rule). The genuine, permanent SG is the
+# hand-created "dev-test-app-servers" group already documented in
+# INFRASTRUCTURE_REFERENCE.md §2 — reference that directly instead.
 
 resource "aws_security_group" "java_internal_access" {
   name        = "java-internal-lb-access"
@@ -121,18 +124,13 @@ resource "aws_security_group" "java_internal_access" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "node_to_java" {
-  # Only for envs present in BOTH maps with a real node instance — dev/qa
-  # today (node and java share the same env keys by convention).
-  for_each = {
-    for env, inst in data.aws_instance.node_app_env : env => inst
-    if contains(keys(var.java_environments), env)
-  }
+  for_each = var.java_environments
 
   security_group_id            = aws_security_group.java_internal_access.id
-  referenced_security_group_id = each.value.vpc_security_group_ids[0]
+  referenced_security_group_id = var.node_app_security_group_id
   ip_protocol                  = "tcp"
-  from_port                    = var.java_environments[each.key].port
-  to_port                      = var.java_environments[each.key].port
+  from_port                    = each.value.port
+  to_port                      = each.value.port
   description                  = "Allow node-app (${each.key}) to reach the Java internal LB/instances on its matching port"
 }
 

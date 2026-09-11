@@ -115,7 +115,7 @@ resource "aws_lb_target_group_attachment" "java" {
 
 resource "aws_security_group" "java_internal_access" {
   name        = "java-internal-lb-access"
-  description = "Grants node-app's own security group access to the Java internal LB/instances. No CIDR-based rule for real traffic — only the health-check exception below, scoped to the LB's own subnets."
+  description = "Grants the node-app security group access to the Java internal LB and instances. No CIDR-based rule for real traffic - only the health-check exception below, scoped to the LB subnets."
   vpc_id      = var.vpc_id
 
   tags = {
@@ -153,7 +153,7 @@ resource "aws_vpc_security_group_ingress_rule" "java_healthcheck" {
   ip_protocol       = "tcp"
   from_port         = each.value.port
   to_port           = each.value.port
-  description       = "Allow java-internal-nlb's own health-check probes for this env/port (NLB nodes carry no SG membership) - scoped to its own subnet CIDR, not VPC-wide"
+  description       = "Allow java-internal-nlb health-check probes for this env/port (NLB nodes carry no SG membership) - scoped to its own subnet CIDR, not VPC-wide"
 }
 
 resource "aws_network_interface_sg_attachment" "java" {

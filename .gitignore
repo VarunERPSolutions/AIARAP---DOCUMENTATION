@@ -16,3 +16,8 @@ crash.*.log
 # Lambda build artifacts (rebuilt by terraform apply's null_resource, not source)
 terraform/modules/*/build/
 
+
+# Local-only configuration (generated values, credentials) — never committed
+.local-config/*
+!.local-config/README.md
+!.env.example

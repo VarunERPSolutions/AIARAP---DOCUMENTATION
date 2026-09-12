@@ -230,7 +230,7 @@ Roughly: **~55% unit, ~5% contract, ~12% UI integration, ~22% service/boundary i
 ## 5. Deliberately deferred (not gaps — decisions)
 
 - **QA/staging environment**: not provisioned now; provisioned only once the first feature is dev-complete and QA-ready. Several rows in §4 depend on this.
-- **E2E test infrastructure/orchestration**: not built now. A prior design for this existed and was withdrawn — its number is retired and is not to be cited as a live reference (see the Notetaker log entry `2026-09-11-sandcastle-aws-inventory-and-design-record` for the withdrawn design's content and lessons). Any future rebuild must: (a) never build isolated-environment infrastructure on top of a shared deployment (the withdrawal's core lesson — teardown coupling to the shared `node-dev` deployment was the one real cost of that design), (b) prove the orchestrator against one real lane before provisioning a pool, (c) design the teardown path alongside the create path, (d) start minimal.
+- **E2E test infrastructure/orchestration**: not built now. Any future design must: (a) never build isolated-environment infrastructure on top of a shared deployment, (b) prove the orchestrator against one real lane before provisioning a pool, (c) design the teardown path alongside the create path, (d) start minimal.
 - **Pact/consumer-driven contracts**: rejected for now in favor of generated-OpenAPI-types; revisit only if that proves insufficient.
 - **CODEOWNERS / automated table-ownership enforcement**: not introduced now (see §6).
 
@@ -301,7 +301,7 @@ The only place AI tokens enter this system at all is human- or agent-driven deve
 | Triaging one CI failure | Low | Small, bounded input, occasional |
 | Triaging a whole failed suite (many red tests, long logs) | Medium | Larger log volume, more back-and-forth |
 | A design/architecture session (like this one) | Medium | Long conversation, large accumulated context, but infrequent |
-| A future Sandcastle-style implement→test→iterate agent loop, if rebuilt | High, and recurring | Runs repeatedly per feature/ticket, feeding diffs + logs + iteration history back each pass — the only element that would make token cost structural rather than occasional |
+| A future implement→test→iterate agent loop, if built | High, and recurring | Runs repeatedly per feature/ticket, feeding diffs + logs + iteration history back each pass — the only element that would make token cost structural rather than occasional |
 
 **Overall, for the architecture as decided (no such loop built): Low.**
 

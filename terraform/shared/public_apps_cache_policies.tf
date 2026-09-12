@@ -37,12 +37,28 @@ resource "aws_cloudfront_cache_policy" "spa_immutable_assets" {
   }
 }
 
+# NOTE: the policy NAME still says "no-cache" for a reason — renaming a
+# cache policy in place would churn the two distributions that reference it
+# for no functional gain. The behaviour is described accurately in `comment`.
 resource "aws_cloudfront_cache_policy" "spa_default" {
-  name        = "spa-default-no-cache"
-  comment     = "index.html and any other unhashed file — always revalidate so a new deploy is visible immediately."
+  name    = "spa-default-no-cache"
+  comment = "Unhashed files: browser revalidates every load; edge may cache. Deploy invalidates /index.html."
+
+  # max_ttl = 0 previously meant CloudFront could NEVER cache index.html no
+  # matter what header the origin sent — every single page load went all the
+  # way back to S3 (measured: ~430 ms TTFB, "Miss from cloudfront" on 100% of
+  # loads, warm or cold). Raising max_ttl does NOT weaken freshness, because:
+  #   - default_ttl stays 0, so an object with NO Cache-Control is still
+  #     treated as uncacheable — the safe default is unchanged;
+  #   - index.html is uploaded with max-age=0, must-revalidate, so every
+  #     browser still revalidates on every load and can never show stale HTML;
+  #   - s-maxage=1y lets only the SHARED (edge) cache hold it, and deploy-dev.yml
+  #     already invalidates /index.html on every deploy, which is what evicts it.
+  # Net effect: the browser's revalidation is answered by the edge instead of
+  # by S3. Same freshness guarantee, one less origin round trip.
   min_ttl     = 0
   default_ttl = 0
-  max_ttl     = 0
+  max_ttl     = 31536000
 
   parameters_in_cache_key_and_forwarded_to_origin {
     cookies_config {
@@ -54,11 +70,10 @@ resource "aws_cloudfront_cache_policy" "spa_default" {
     query_strings_config {
       query_string_behavior = "none"
     }
-    # AWS rejects enable_accept_encoding_* = true on a policy with all-zero
-    # TTLs ("InvalidArgument: ... invalid for policy with caching disabled").
-    # Irrelevant here anyway — response compression itself still happens via
-    # each cache behavior's compress=true, independent of this cache-key setting.
-    enable_accept_encoding_gzip   = false
-    enable_accept_encoding_brotli = false
+    # Now that max_ttl is non-zero this policy is no longer "caching disabled",
+    # so AWS accepts these — and they matter: without them the edge would hold
+    # a single encoding of index.html and hand it to every client.
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
   }
 }
